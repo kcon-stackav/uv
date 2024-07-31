@@ -20,30 +20,29 @@ use uv_configuration::{
     NoBuild, PreviewMode, SetupPyStrategy,
 };
 use uv_dispatch::BuildDispatch;
-use uv_fs::Simplified;
-use uv_git::GitResolver;
-use uv_resolver::{ExcludeNewer, FlatIndex, InMemoryIndex};
-use uv_toolchain::{
-    request_from_version_file, EnvironmentPreference, Toolchain, ToolchainFetch,
-    ToolchainPreference, ToolchainRequest,
+use uv_fs::{Simplified, CWD};
+use uv_python::{
+    request_from_version_file, EnvironmentPreference, PythonFetch, PythonInstallation,
+    PythonPreference, PythonRequest, VersionRequest,
 };
-use uv_types::{BuildContext, BuildIsolation, HashStrategy, InFlight};
+use uv_resolver::{ExcludeNewer, FlatIndex, RequiresPython};
+use uv_shell::Shell;
+use uv_types::{BuildContext, BuildIsolation, HashStrategy};
+use uv_warnings::warn_user_once;
+use uv_workspace::{DiscoveryOptions, VirtualProject, WorkspaceError};
 
-use crate::commands::{pip, ExitStatus};
+use crate::commands::project::find_requires_python;
+use crate::commands::reporters::PythonDownloadReporter;
+use crate::commands::{pip, ExitStatus, SharedState};
 use crate::printer::Printer;
-use crate::shell::Shell;
 
 /// Create a virtual environment.
-#[allow(
-    clippy::unnecessary_wraps,
-    clippy::too_many_arguments,
-    clippy::fn_params_excessive_bools
-)]
+#[allow(clippy::unnecessary_wraps, clippy::fn_params_excessive_bools)]
 pub(crate) async fn venv(
     path: &Path,
     python_request: Option<&str>,
-    toolchain_preference: ToolchainPreference,
-    toolchain_fetch: ToolchainFetch,
+    python_preference: PythonPreference,
+    python_fetch: PythonFetch,
     link_mode: LinkMode,
     index_locations: &IndexLocations,
     index_strategy: IndexStrategy,
@@ -58,6 +57,7 @@ pub(crate) async fn venv(
     preview: PreviewMode,
     cache: &Cache,
     printer: Printer,
+    relocatable: bool,
 ) -> Result<ExitStatus> {
     match venv_impl(
         path,
@@ -71,13 +71,14 @@ pub(crate) async fn venv(
         connectivity,
         seed,
         preview,
-        toolchain_preference,
-        toolchain_fetch,
+        python_preference,
+        python_fetch,
         allow_existing,
         exclude_newer,
         native_tls,
         cache,
         printer,
+        relocatable,
     )
     .await
     {
@@ -109,7 +110,7 @@ enum VenvError {
 }
 
 /// Create a virtual environment.
-#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+#[allow(clippy::fn_params_excessive_bools)]
 async fn venv_impl(
     path: &Path,
     python_request: Option<&str>,
@@ -122,48 +123,93 @@ async fn venv_impl(
     connectivity: Connectivity,
     seed: bool,
     preview: PreviewMode,
-    toolchain_preference: ToolchainPreference,
-    toolchain_fetch: ToolchainFetch,
+    python_preference: PythonPreference,
+    python_fetch: PythonFetch,
     allow_existing: bool,
     exclude_newer: Option<ExcludeNewer>,
     native_tls: bool,
     cache: &Cache,
     printer: Printer,
+    relocatable: bool,
 ) -> miette::Result<ExitStatus> {
+    if preview.is_disabled() && relocatable {
+        warn_user_once!("`--relocatable` is experimental and may change without warning");
+    }
+
     let client_builder = BaseClientBuilder::default()
         .connectivity(connectivity)
         .native_tls(native_tls);
 
-    let mut interpreter_request = python_request.map(ToolchainRequest::parse);
+    let reporter = PythonDownloadReporter::single(printer);
+
+    // (1) Explicit request from user
+    let mut interpreter_request = python_request.map(PythonRequest::parse);
+
+    // (2) Request from `.python-version`
     if preview.is_enabled() && interpreter_request.is_none() {
-        interpreter_request = request_from_version_file().await.into_diagnostic()?;
+        interpreter_request =
+            request_from_version_file(&std::env::current_dir().into_diagnostic()?)
+                .await
+                .into_diagnostic()?;
+    }
+
+    // (3) `Requires-Python` in `pyproject.toml`
+    if preview.is_enabled() && interpreter_request.is_none() {
+        let project = match VirtualProject::discover(&CWD, &DiscoveryOptions::default()).await {
+            Ok(project) => Some(project),
+            Err(WorkspaceError::MissingPyprojectToml) => None,
+            Err(WorkspaceError::NonWorkspace(_)) => None,
+            Err(err) => return Err(err).into_diagnostic(),
+        };
+
+        if let Some(project) = project {
+            interpreter_request = find_requires_python(project.workspace())
+                .into_diagnostic()?
+                .as_ref()
+                .map(RequiresPython::specifiers)
+                .map(|specifiers| {
+                    PythonRequest::Version(VersionRequest::Range(specifiers.clone()))
+                });
+        }
     }
 
     // Locate the Python interpreter to use in the environment
-    let interpreter = Toolchain::find_or_fetch(
+    let python = PythonInstallation::find_or_fetch(
         interpreter_request,
         EnvironmentPreference::OnlySystem,
-        toolchain_preference,
-        toolchain_fetch,
+        python_preference,
+        python_fetch,
         &client_builder,
         cache,
+        Some(&reporter),
     )
     .await
-    .into_diagnostic()?
-    .into_interpreter();
+    .into_diagnostic()?;
+
+    let managed = python.source().is_managed();
+    let interpreter = python.into_interpreter();
 
     // Add all authenticated sources to the cache.
     for url in index_locations.urls() {
         store_credentials_from_url(url);
     }
 
-    writeln!(
-        printer.stderr(),
-        "Using Python {} interpreter at: {}",
-        interpreter.python_version(),
-        interpreter.sys_executable().user_display().cyan()
-    )
-    .into_diagnostic()?;
+    if managed {
+        writeln!(
+            printer.stderr(),
+            "Using Python {}",
+            interpreter.python_version().cyan()
+        )
+        .into_diagnostic()?;
+    } else {
+        writeln!(
+            printer.stderr(),
+            "Using Python {} interpreter at: {}",
+            interpreter.python_version(),
+            interpreter.sys_executable().user_display().cyan()
+        )
+        .into_diagnostic()?;
+    }
 
     writeln!(
         printer.stderr(),
@@ -180,6 +226,7 @@ async fn venv_impl(
         prompt,
         system_site_packages,
         allow_existing,
+        relocatable,
     )
     .map_err(VenvError::Creation)?;
 
@@ -188,13 +235,17 @@ async fn venv_impl(
         // Extract the interpreter.
         let interpreter = venv.interpreter();
 
+        // Add all authenticated sources to the cache.
+        for url in index_locations.urls() {
+            store_credentials_from_url(url);
+        }
+
         // Instantiate a client.
-        let client = RegistryClientBuilder::new(cache.clone())
-            .native_tls(native_tls)
+        let client = RegistryClientBuilder::from(client_builder)
+            .cache(cache.clone())
             .index_urls(index_locations.index_urls())
             .index_strategy(index_strategy)
             .keyring(keyring_provider)
-            .connectivity(connectivity)
             .markers(interpreter.markers())
             .platform(interpreter.platform())
             .build();
@@ -215,12 +266,8 @@ async fn venv_impl(
             )
         };
 
-        // Create a shared in-memory index.
-        let index = InMemoryIndex::default();
-        let git = GitResolver::default();
-
-        // Track in-flight downloads, builds, etc., across resolutions.
-        let in_flight = InFlight::default();
+        // Initialize any shared state.
+        let state = SharedState::default();
 
         // For seed packages, assume the default settings and concurrency is sufficient.
         let config_settings = ConfigSettings::default();
@@ -236,9 +283,9 @@ async fn venv_impl(
             interpreter,
             index_locations,
             &flat_index,
-            &index,
-            &git,
-            &in_flight,
+            &state.index,
+            &state.git,
+            &state.in_flight,
             index_strategy,
             SetupPyStrategy::default(),
             &config_settings,
@@ -284,7 +331,7 @@ async fn venv_impl(
     // Determine the appropriate activation command.
     let activation = match Shell::from_env() {
         None => None,
-        Some(Shell::Bash | Shell::Zsh) => Some(format!(
+        Some(Shell::Bash | Shell::Zsh | Shell::Ksh) => Some(format!(
             "source {}",
             shlex_posix(venv.scripts().join("activate"))
         )),

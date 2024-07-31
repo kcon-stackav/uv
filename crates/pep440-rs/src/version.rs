@@ -1,3 +1,10 @@
+#[cfg(feature = "pyo3")]
+use pyo3::{
+    basic::CompareOp, exceptions::PyValueError, pyclass, pymethods, FromPyObject, IntoPy, PyAny,
+    PyObject, PyResult, Python,
+};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use std::sync::LazyLock;
 use std::{
     borrow::Borrow,
     cmp::Ordering,
@@ -5,13 +12,6 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-
-#[cfg(feature = "pyo3")]
-use pyo3::{
-    basic::CompareOp, exceptions::PyValueError, pyclass, pymethods, FromPyObject, IntoPy, PyAny,
-    PyObject, PyResult, Python,
-};
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 /// One of `~=` `==` `!=` `<=` `>=` `<` `>` `===`
 #[derive(
@@ -59,6 +59,34 @@ pub enum Operator {
 }
 
 impl Operator {
+    /// Negates this operator, if a negation exists, so that it has the
+    /// opposite meaning.
+    ///
+    /// This returns a negated operator in every case except for the `~=`
+    /// operator. In that case, `None` is returned and callers may need to
+    /// handle its negation at a higher level. (For example, if it's negated
+    /// in the context of a marker expression, then the "compatible" version
+    /// constraint can be split into its component parts and turned into a
+    /// disjunction of the negation of each of those parts.)
+    ///
+    /// Note that this routine is not reversible in all cases. For example
+    /// `Operator::ExactEqual` negates to `Operator::NotEqual`, and
+    /// `Operator::NotEqual` in turn negates to `Operator::Equal`.
+    pub fn negate(self) -> Option<Operator> {
+        Some(match self {
+            Operator::Equal => Operator::NotEqual,
+            Operator::EqualStar => Operator::NotEqualStar,
+            Operator::ExactEqual => Operator::NotEqual,
+            Operator::NotEqual => Operator::Equal,
+            Operator::NotEqualStar => Operator::EqualStar,
+            Operator::TildeEqual => return None,
+            Operator::LessThan => Operator::GreaterThanEqual,
+            Operator::LessThanEqual => Operator::GreaterThan,
+            Operator::GreaterThan => Operator::LessThanEqual,
+            Operator::GreaterThanEqual => Operator::LessThan,
+        })
+    }
+
     /// Returns true if and only if this operator can be used in a version
     /// specifier with a version containing a non-empty local segment.
     ///
@@ -537,6 +565,13 @@ impl Version {
         self
     }
 
+    /// Return the version with any segments apart from the release removed.
+    #[inline]
+    #[must_use]
+    pub fn only_release(&self) -> Self {
+        Self::new(self.release().iter().copied())
+    }
+
     /// Set the min-release component and return the updated version.
     ///
     /// The "min" component is internal-only, and does not exist in PEP 440.
@@ -786,8 +821,8 @@ impl FromStr for Version {
 /// * The epoch must be `0`.
 /// * The release portion must have 4 or fewer segments.
 /// * All release segments, except for the first, must be representable in a
-/// `u8`. The first segment must be representable in a `u16`. (This permits
-/// calendar versions, like `2023.03`, to be represented.)
+///   `u8`. The first segment must be representable in a `u16`. (This permits
+///   calendar versions, like `2023.03`, to be represented.)
 /// * There is *at most* one of the following components: pre, dev or post.
 /// * If there is a pre segment, then its numeric value is less than 64.
 /// * If there is a dev or post segment, then its value is less than `u8::MAX`.
@@ -808,20 +843,20 @@ impl FromStr for Version {
 ///
 /// * Bytes 6 and 7 correspond to the first release segment as a `u16`.
 /// * Bytes 5, 4 and 3 correspond to the second, third and fourth release
-/// segments, respectively.
+///   segments, respectively.
 /// * Bytes 2, 1 and 0 represent *one* of the following:
 ///   `min, .devN, aN, bN, rcN, <no suffix>, .postN, max`.
 ///   Its representation is thus:
 ///   * The most significant 3 bits of Byte 2 corresponds to a value in
-///   the range 0-6 inclusive, corresponding to min, dev, pre-a, pre-b, pre-rc,
-///   no-suffix or post releases, respectively. `min` is a special version that
-///   does not exist in PEP 440, but is used here to represent the smallest
-///   possible version, preceding any `dev`, `pre`, `post` or releases. `max` is
-///   an analogous concept for the largest possible version, following any `post`
-///   or local releases.
+///     the range 0-6 inclusive, corresponding to min, dev, pre-a, pre-b, pre-rc,
+///     no-suffix or post releases, respectively. `min` is a special version that
+///     does not exist in PEP 440, but is used here to represent the smallest
+///     possible version, preceding any `dev`, `pre`, `post` or releases. `max` is
+///     an analogous concept for the largest possible version, following any `post`
+///     or local releases.
 ///   * The low 5 bits combined with the bits in bytes 1 and 0 correspond
-///   to the release number of the suffix, if one exists. If there is no
-///   suffix, then this bits are always 0.
+///     to the release number of the suffix, if one exists. If there is no
+///     suffix, then these bits are always 0.
 ///
 /// The order of the encoding above is significant. For example, suffixes are
 /// encoded at a less significant location than the release numbers, so that
@@ -2497,8 +2532,8 @@ fn parse_u64(bytes: &[u8]) -> Result<u64, VersionParseError> {
 }
 
 /// The minimum version that can be represented by a [`Version`]: `0a0.dev0`.
-pub static MIN_VERSION: once_cell::sync::Lazy<Version> =
-    once_cell::sync::Lazy::new(|| Version::from_str("0a0.dev0").unwrap());
+pub static MIN_VERSION: LazyLock<Version> =
+    LazyLock::new(|| Version::from_str("0a0.dev0").unwrap());
 
 #[cfg(test)]
 mod tests {

@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Parser;
 use fs_err as fs;
+use rustc_hash::FxHashMap;
 
 use distribution_types::IndexLocations;
-use rustc_hash::FxHashMap;
 use uv_build::{SourceBuild, SourceBuildContext};
 use uv_cache::{Cache, CacheArgs};
 use uv_client::RegistryClientBuilder;
@@ -16,8 +16,8 @@ use uv_configuration::{
 };
 use uv_dispatch::BuildDispatch;
 use uv_git::GitResolver;
+use uv_python::{EnvironmentPreference, PythonEnvironment, PythonRequest};
 use uv_resolver::{FlatIndex, InMemoryIndex};
-use uv_toolchain::{EnvironmentPreference, PythonEnvironment, ToolchainRequest};
 use uv_types::{BuildContext, BuildIsolation, InFlight};
 
 #[derive(Parser)]
@@ -68,8 +68,8 @@ pub(crate) async fn build(args: BuildArgs) -> Result<PathBuf> {
     let index_urls = IndexLocations::default();
     let index_strategy = IndexStrategy::default();
     let setup_py = SetupPyStrategy::default();
-    let toolchain = PythonEnvironment::find(
-        &ToolchainRequest::default(),
+    let python = PythonEnvironment::find(
+        &PythonRequest::default(),
         EnvironmentPreference::OnlyVirtual,
         &cache,
     )?;
@@ -78,7 +78,7 @@ pub(crate) async fn build(args: BuildArgs) -> Result<PathBuf> {
     let build_dispatch = BuildDispatch::new(
         &client,
         &cache,
-        toolchain.interpreter(),
+        python.interpreter(),
         &index_urls,
         &flat_index,
         &index,

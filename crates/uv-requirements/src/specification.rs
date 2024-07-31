@@ -40,12 +40,12 @@ use distribution_types::{
 use pep508_rs::{UnnamedRequirement, UnnamedRequirementUrl};
 use pypi_types::Requirement;
 use pypi_types::VerbatimParsedUrl;
-use requirements_txt::{FindLink, RequirementsTxt, RequirementsTxtRequirement};
+use requirements_txt::{RequirementsTxt, RequirementsTxtRequirement};
 use uv_client::BaseClientBuilder;
 use uv_configuration::{NoBinary, NoBuild};
-use uv_distribution::pyproject::PyProjectToml;
-use uv_fs::Simplified;
+use uv_fs::{Simplified, CWD};
 use uv_normalize::{ExtraName, PackageName};
+use uv_workspace::pyproject::PyProjectToml;
 
 use crate::RequirementsSource;
 
@@ -86,18 +86,16 @@ impl RequirementsSpecification {
     ) -> Result<Self> {
         Ok(match source {
             RequirementsSource::Package(name) => {
-                let requirement =
-                    RequirementsTxtRequirement::parse(name, std::env::current_dir()?, false)
-                        .with_context(|| format!("Failed to parse: `{name}`"))?;
+                let requirement = RequirementsTxtRequirement::parse(name, &*CWD, false)
+                    .with_context(|| format!("Failed to parse: `{name}`"))?;
                 Self {
                     requirements: vec![UnresolvedRequirementSpecification::from(requirement)],
                     ..Self::default()
                 }
             }
             RequirementsSource::Editable(name) => {
-                let requirement =
-                    RequirementsTxtRequirement::parse(name, std::env::current_dir()?, true)
-                        .with_context(|| format!("Failed to parse: `{name}`"))?;
+                let requirement = RequirementsTxtRequirement::parse(name, &*CWD, true)
+                    .with_context(|| format!("Failed to parse: `{name}`"))?;
                 Self {
                     requirements: vec![UnresolvedRequirementSpecification::from(
                         requirement.into_editable()?,
@@ -114,8 +112,7 @@ impl RequirementsSpecification {
                     return Err(anyhow::anyhow!("File not found: `{}`", path.user_display()));
                 }
 
-                let requirements_txt =
-                    RequirementsTxt::parse(path, std::env::current_dir()?, client_builder).await?;
+                let requirements_txt = RequirementsTxt::parse(path, &*CWD, client_builder).await?;
                 Self {
                     requirements: requirements_txt
                         .requirements
@@ -143,10 +140,7 @@ impl RequirementsSpecification {
                     find_links: requirements_txt
                         .find_links
                         .into_iter()
-                        .map(|link| match link {
-                            FindLink::Url(url) => FlatIndexLocation::Url(url),
-                            FindLink::Path(path) => FlatIndexLocation::Path(path),
-                        })
+                        .map(FlatIndexLocation::from)
                         .collect(),
                     no_binary: requirements_txt.no_binary,
                     no_build: requirements_txt.only_binary,
@@ -316,7 +310,7 @@ impl RequirementsSpecification {
 
     /// Parse an individual package requirement.
     pub fn parse_package(name: &str) -> Result<UnresolvedRequirementSpecification> {
-        let requirement = RequirementsTxtRequirement::parse(name, std::env::current_dir()?, false)
+        let requirement = RequirementsTxtRequirement::parse(name, &*CWD, false)
             .with_context(|| format!("Failed to parse: `{name}`"))?;
         Ok(UnresolvedRequirementSpecification::from(requirement))
     }
@@ -338,5 +332,10 @@ impl RequirementsSpecification {
                 .collect(),
             ..Self::default()
         }
+    }
+
+    /// Return true if the specification does not include any requirements to install.
+    pub fn is_empty(&self) -> bool {
+        self.requirements.is_empty() && self.source_trees.is_empty() && self.overrides.is_empty()
     }
 }

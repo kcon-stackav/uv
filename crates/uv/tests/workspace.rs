@@ -1,11 +1,16 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::Result;
 use assert_cmd::assert::OutputAssertExt;
+use assert_fs::fixture::{FileWriteStr, PathChild};
+use indoc::indoc;
+use insta::assert_json_snapshot;
+use serde::{Deserialize, Serialize};
 
-use crate::common::{copy_dir_ignore, uv_snapshot, TestContext};
+use crate::common::{copy_dir_ignore, make_project, uv_snapshot, TestContext};
 
 mod common;
 
@@ -173,13 +178,15 @@ fn test_albatross_project_in_excluded() {
         .join("packages")
         .join("seeds");
     uv_snapshot!(context.filters(), install_workspace(&context, &current_dir), @r###"
-    success: false
-    exit_code: 2
+    success: true
+    exit_code: 0
     ----- stdout -----
 
     ----- stderr -----
-    error: Failed to download and build: `seeds @ file://[WORKSPACE]/scripts/workspaces/albatross-project-in-excluded/packages/seeds`
-      Caused by: The project is marked as unmanaged: `[WORKSPACE]/scripts/workspaces/albatross-project-in-excluded/packages/seeds`
+    Resolved 2 packages in [TIME]
+    Prepared 1 package in [TIME]
+    Installed 1 package in [TIME]
+     + seeds==1.0.0 (from file://[WORKSPACE]/scripts/workspaces/albatross-project-in-excluded/packages/seeds)
     "###
     );
 }
@@ -491,10 +498,10 @@ fn test_uv_run_with_package_root_workspace() -> Result<()> {
     uv_snapshot!(context.filters(), universal_windows_filters=true, context
         .run()
         .arg("--preview")
-            .arg("--package")
-            .arg("albatross")
-            .arg("check_installed_albatross.py")
-            .current_dir(&work_dir), @r###"
+        .arg("--package")
+        .arg("albatross")
+        .arg("check_installed_albatross.py")
+        .current_dir(&work_dir), @r###"
     success: true
     exit_code: 0
     ----- stdout -----
@@ -506,6 +513,105 @@ fn test_uv_run_with_package_root_workspace() -> Result<()> {
     Installed 2 packages in [TIME]
      + albatross==0.1.0 (from file://[TEMP_DIR]/albatross-root-workspace)
      + tqdm==4.66.2
+    "###
+    );
+
+    Ok(())
+}
+
+/// Check that `uv run --isolated` creates isolated virtual environments.
+#[test]
+fn test_uv_run_isolate() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let work_dir = context.temp_dir.join("albatross-root-workspace");
+
+    copy_dir_ignore(workspaces_dir().join("albatross-root-workspace"), &work_dir)?;
+
+    let mut filters = context.filters();
+    filters.push((
+        r"Using Python 3.12.\[X\] interpreter at: .*",
+        "Using Python 3.12.[X] interpreter at: [PYTHON]",
+    ));
+
+    // Install the root package.
+    uv_snapshot!(context.filters(), universal_windows_filters=true, context
+        .run()
+        .arg("--preview")
+        .arg("--package")
+        .arg("albatross")
+        .arg("check_installed_albatross.py")
+        .current_dir(&work_dir), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    Success
+
+    ----- stderr -----
+    Using Python 3.12.[X] interpreter at: [PYTHON-3.12]
+    Creating virtualenv at: .venv
+    Resolved 8 packages in [TIME]
+    Prepared 7 packages in [TIME]
+    Installed 7 packages in [TIME]
+     + albatross==0.1.0 (from file://[TEMP_DIR]/albatross-root-workspace)
+     + anyio==4.3.0
+     + bird-feeder==1.0.0 (from file://[TEMP_DIR]/albatross-root-workspace/packages/bird-feeder)
+     + idna==3.6
+     + seeds==1.0.0 (from file://[TEMP_DIR]/albatross-root-workspace/packages/seeds)
+     + sniffio==1.3.1
+     + tqdm==4.66.2
+    "###
+    );
+
+    // Run in `bird-feeder`. We shouldn't be able to import `albatross`, but we _can_ due to our
+    // virtual environment semantics. Specifically, we only make the changes necessary to run a
+    // given command, so we don't remove `albatross` from the environment.
+    uv_snapshot!(filters, context
+        .run()
+        .arg("--preview")
+        .arg("--package")
+        .arg("bird-feeder")
+        .arg("check_installed_albatross.py")
+        .current_dir(&work_dir), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    Success
+
+    ----- stderr -----
+    Resolved 8 packages in [TIME]
+    Audited 5 packages in [TIME]
+    "###
+    );
+
+    // If we `--isolated`, though, we use an isolated virtual environment, so `albatross` is not
+    // available.
+    // TODO(charlie): This should show the resolution output, but `--isolated` is coupled to
+    // `--no-project` right now.
+    uv_snapshot!(filters, context
+        .run()
+        .arg("--preview")
+        .arg("--isolated")
+        .arg("--package")
+        .arg("bird-feeder")
+        .arg("check_installed_albatross.py")
+        .current_dir(&work_dir), @r###"
+    success: false
+    exit_code: 1
+    ----- stdout -----
+
+    ----- stderr -----
+    Resolved 8 packages in [TIME]
+    Prepared 3 packages in [TIME]
+    Installed 5 packages in [TIME]
+     + anyio==4.3.0
+     + bird-feeder==1.0.0 (from file://[TEMP_DIR]/albatross-root-workspace/packages/bird-feeder)
+     + idna==3.6
+     + seeds==1.0.0 (from file://[TEMP_DIR]/albatross-root-workspace/packages/seeds)
+     + sniffio==1.3.1
+    Traceback (most recent call last):
+      File "[TEMP_DIR]/albatross-root-workspace/check_installed_albatross.py", line 1, in <module>
+        from albatross import fly
+    ModuleNotFoundError: No module named 'albatross'
     "###
     );
 
@@ -525,7 +631,7 @@ fn workspace_lock_idempotence(workspace: &str, subdirectories: &[&str]) -> Resul
         context
             .lock()
             .arg("--preview")
-            .current_dir(&work_dir.join(dir))
+            .current_dir(work_dir.join(dir))
             .assert()
             .success();
 
@@ -563,5 +669,289 @@ fn workspace_lock_idempotence_virtual_workspace() -> Result<()> {
             "packages/seeds",
         ],
     )?;
+    Ok(())
+}
+
+/// Extract just the sources from the lockfile, to test path resolution.
+#[derive(Deserialize, Serialize)]
+struct SourceLock {
+    distribution: Vec<Distribution>,
+}
+
+impl SourceLock {
+    fn sources(self) -> BTreeMap<String, toml::Value> {
+        self.distribution
+            .into_iter()
+            .map(|distribution| (distribution.name, distribution.source))
+            .collect()
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct Distribution {
+    name: String,
+    source: toml::Value,
+}
+
+/// Test path dependencies from one workspace into another.
+///
+/// We have a main workspace with packages `a` and `b`, and a second workspace with `c`, `d` and
+/// `e`. We have `a -> b`, `b -> c`, `c -> d`. `e` should not be installed.
+#[test]
+fn workspace_to_workspace_paths_dependencies() -> Result<()> {
+    let context = TestContext::new("3.12");
+
+    // Build the main workspace ...
+    let main_workspace = context.temp_dir.child("main-workspace");
+    main_workspace
+        .child("pyproject.toml")
+        .write_str(indoc! {r#"
+        [tool.uv.workspace]
+        members = ["packages/*"]
+    "#})?;
+
+    // ... with a  ...
+    let deps = indoc! {r#"
+        dependencies = ["b"]
+
+        [tool.uv.sources]
+        b = { workspace = true }
+    "#};
+    make_project(&main_workspace.join("packages").join("a"), "a", deps)?;
+
+    // ... and b.
+    let deps = indoc! {r#"
+        dependencies = ["c"]
+
+        [tool.uv.sources]
+        c = { path = "../../../other-workspace/packages/c", editable = true }
+    "#};
+    make_project(&main_workspace.join("packages").join("b"), "b", deps)?;
+
+    // Build the second workspace ...
+    let other_workspace = context.temp_dir.child("other-workspace");
+    other_workspace
+        .child("pyproject.toml")
+        .write_str(indoc! {r#"
+        [tool.uv.workspace]
+        members = ["packages/*"]
+    "#})?;
+
+    // ... with c  ...
+    let deps = indoc! {r#"
+        dependencies = ["d"]
+
+        [tool.uv.sources]
+        d = { workspace = true }
+    "#};
+    make_project(&other_workspace.join("packages").join("c"), "c", deps)?;
+
+    // ... and d ...
+    let deps = indoc! {r"
+        dependencies = []
+    "};
+    make_project(&other_workspace.join("packages").join("d"), "d", deps)?;
+
+    // ... and e.
+    let deps = indoc! {r#"
+        dependencies = ["numpy>=2.0.0,<3"]
+    "#};
+    make_project(&other_workspace.join("packages").join("e"), "e", deps)?;
+
+    uv_snapshot!(context.filters(), context.lock().arg("--preview").current_dir(&main_workspace), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+
+    ----- stderr -----
+    Using Python 3.12.[X] interpreter at: [PYTHON-3.12]
+    Resolved 4 packages in [TIME]
+    "###
+    );
+
+    let lock: SourceLock =
+        toml::from_str(&fs_err::read_to_string(main_workspace.join("uv.lock"))?)?;
+
+    assert_json_snapshot!(lock.sources(), @r###"
+    {
+      "a": {
+        "editable": "packages/a"
+      },
+      "b": {
+        "editable": "packages/b"
+      },
+      "c": {
+        "editable": "../other-workspace/packages/c"
+      },
+      "d": {
+        "editable": "../other-workspace/packages/d"
+      }
+    }
+    "###);
+
+    Ok(())
+}
+
+/// Ensure that workspace discovery errors if a member is missing a `pyproject.toml`.
+#[test]
+fn workspace_empty_member() -> Result<()> {
+    let context = TestContext::new("3.12");
+
+    // Build the main workspace ...
+    let workspace = context.temp_dir.child("workspace");
+    workspace.child("pyproject.toml").write_str(indoc! {r#"
+        [tool.uv.workspace]
+        members = ["packages/*"]
+    "#})?;
+
+    // ... with a  ...
+    let deps = indoc! {r#"
+        dependencies = ["b"]
+
+        [tool.uv.sources]
+        b = { workspace = true }
+    "#};
+    make_project(&workspace.join("packages").join("a"), "a", deps)?;
+
+    // ... and b.
+    let deps = indoc! {r"
+    "};
+    make_project(&workspace.join("packages").join("b"), "b", deps)?;
+
+    // ... and an empty c.
+    fs_err::create_dir_all(workspace.join("packages").join("c"))?;
+
+    uv_snapshot!(context.filters(), context.lock().arg("--preview").current_dir(&workspace), @r###"
+    success: false
+    exit_code: 2
+    ----- stdout -----
+
+    ----- stderr -----
+    error: Workspace member `[TEMP_DIR]/workspace/packages/c` is missing a `pyproject.toml` (matches: `packages/*`)
+    "###
+    );
+
+    Ok(())
+}
+
+/// Ensure that workspace discovery ignores hidden directories.
+#[test]
+fn workspace_hidden_files() -> Result<()> {
+    let context = TestContext::new("3.12");
+
+    // Build the main workspace ...
+    let workspace = context.temp_dir.child("workspace");
+    workspace.child("pyproject.toml").write_str(indoc! {r#"
+        [tool.uv.workspace]
+        members = ["packages/*"]
+    "#})?;
+
+    // ... with a  ...
+    let deps = indoc! {r#"
+        dependencies = ["b"]
+
+        [tool.uv.sources]
+        b = { workspace = true }
+    "#};
+    make_project(&workspace.join("packages").join("a"), "a", deps)?;
+
+    // ... and b.
+    let deps = indoc! {r"
+    "};
+    make_project(&workspace.join("packages").join("b"), "b", deps)?;
+
+    // ... and a hidden c.
+    fs_err::create_dir_all(workspace.join("packages").join(".c"))?;
+
+    uv_snapshot!(context.filters(), context.lock().arg("--preview").current_dir(&workspace), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+
+    ----- stderr -----
+    Using Python 3.12.[X] interpreter at: [PYTHON-3.12]
+    Resolved 2 packages in [TIME]
+    "###
+    );
+
+    let lock: SourceLock = toml::from_str(&fs_err::read_to_string(workspace.join("uv.lock"))?)?;
+
+    assert_json_snapshot!(lock.sources(), @r###"
+    {
+      "a": {
+        "editable": "packages/a"
+      },
+      "b": {
+        "editable": "packages/b"
+      }
+    }
+    "###);
+
+    Ok(())
+}
+
+/// Ensure that workspace discovery accepts valid hidden directories.
+#[test]
+fn workspace_hidden_member() -> Result<()> {
+    let context = TestContext::new("3.12");
+
+    // Build the main workspace ...
+    let workspace = context.temp_dir.child("workspace");
+    workspace.child("pyproject.toml").write_str(indoc! {r#"
+        [tool.uv.workspace]
+        members = ["packages/*"]
+    "#})?;
+
+    // ... with a  ...
+    let deps = indoc! {r#"
+        dependencies = ["b"]
+
+        [tool.uv.sources]
+        b = { workspace = true }
+    "#};
+    make_project(&workspace.join("packages").join("a"), "a", deps)?;
+
+    // ... and b.
+    let deps = indoc! {r#"
+        dependencies = ["c"]
+
+        [tool.uv.sources]
+        c = { workspace = true }
+    "#};
+    make_project(&workspace.join("packages").join("b"), "b", deps)?;
+
+    // ... and a hidden (but valid) .c.
+    let deps = indoc! {r"
+        dependencies = []
+    "};
+    make_project(&workspace.join("packages").join(".c"), "c", deps)?;
+
+    uv_snapshot!(context.filters(), context.lock().arg("--preview").current_dir(&workspace), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+
+    ----- stderr -----
+    Using Python 3.12.[X] interpreter at: [PYTHON-3.12]
+    Resolved 3 packages in [TIME]
+    "###
+    );
+
+    let lock: SourceLock = toml::from_str(&fs_err::read_to_string(workspace.join("uv.lock"))?)?;
+
+    assert_json_snapshot!(lock.sources(), @r###"
+    {
+      "a": {
+        "editable": "packages/a"
+      },
+      "b": {
+        "editable": "packages/b"
+      },
+      "c": {
+        "editable": "packages/.c"
+      }
+    }
+    "###);
+
     Ok(())
 }

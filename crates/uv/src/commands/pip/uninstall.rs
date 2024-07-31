@@ -13,10 +13,10 @@ use uv_cache::Cache;
 use uv_client::{BaseClientBuilder, Connectivity};
 use uv_configuration::{KeyringProviderType, PreviewMode};
 use uv_fs::Simplified;
+use uv_python::EnvironmentPreference;
+use uv_python::PythonRequest;
+use uv_python::{Prefix, PythonEnvironment, Target};
 use uv_requirements::{RequirementsSource, RequirementsSpecification};
-use uv_toolchain::EnvironmentPreference;
-use uv_toolchain::ToolchainRequest;
-use uv_toolchain::{Prefix, PythonEnvironment, Target};
 
 use crate::commands::{elapsed, ExitStatus};
 use crate::printer::Printer;
@@ -37,6 +37,7 @@ pub(crate) async fn pip_uninstall(
     printer: Printer,
 ) -> Result<ExitStatus> {
     let start = std::time::Instant::now();
+
     let client_builder = BaseClientBuilder::new()
         .connectivity(connectivity)
         .native_tls(native_tls)
@@ -49,7 +50,7 @@ pub(crate) async fn pip_uninstall(
     let environment = PythonEnvironment::find(
         &python
             .as_deref()
-            .map(ToolchainRequest::parse)
+            .map(PythonRequest::parse)
             .unwrap_or_default(),
         EnvironmentPreference::from_system_flag(system, true),
         &cache,
@@ -67,15 +68,13 @@ pub(crate) async fn pip_uninstall(
             "Using `--target` directory at {}",
             target.root().user_display()
         );
-        target.init()?;
-        environment.with_target(target)
+        environment.with_target(target)?
     } else if let Some(prefix) = prefix {
         debug!(
             "Using `--prefix` directory at {}",
             prefix.root().user_display()
         );
-        prefix.init()?;
-        environment.with_prefix(prefix)
+        environment.with_prefix(prefix)?
     } else {
         environment
     };
@@ -147,7 +146,7 @@ pub(crate) async fn pip_uninstall(
             if installed.is_empty() {
                 writeln!(
                     printer.stderr(),
-                    "{}{} Skipping {} as it is not installed.",
+                    "{}{} Skipping {} as it is not installed",
                     "warning".yellow().bold(),
                     ":".bold(),
                     package.as_ref().bold()
@@ -163,7 +162,7 @@ pub(crate) async fn pip_uninstall(
             if installed.is_empty() {
                 writeln!(
                     printer.stderr(),
-                    "{}{} Skipping {} as it is not installed.",
+                    "{}{} Skipping {} as it is not installed",
                     "warning".yellow().bold(),
                     ":".bold(),
                     url.as_ref().bold()
@@ -182,7 +181,7 @@ pub(crate) async fn pip_uninstall(
     if distributions.is_empty() {
         writeln!(
             printer.stderr(),
-            "{}{} No packages to uninstall.",
+            "{}{} No packages to uninstall",
             "warning".yellow().bold(),
             ":".bold(),
         )?;
@@ -206,14 +205,14 @@ pub(crate) async fn pip_uninstall(
         printer.stderr(),
         "{}",
         format!(
-            "Uninstalled {} in {}",
+            "Uninstalled {} {}",
             format!(
                 "{} package{}",
                 distributions.len(),
                 if distributions.len() == 1 { "" } else { "s" }
             )
             .bold(),
-            elapsed(start.elapsed())
+            format!("in {}", elapsed(start.elapsed())).dimmed()
         )
         .dimmed()
     )?;

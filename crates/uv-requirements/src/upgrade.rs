@@ -1,12 +1,11 @@
 use std::path::Path;
 
-use anstream::eprint;
 use anyhow::Result;
 
 use requirements_txt::RequirementsTxt;
 use uv_client::{BaseClientBuilder, Connectivity};
 use uv_configuration::Upgrade;
-use uv_distribution::Workspace;
+use uv_fs::CWD;
 use uv_git::ResolvedRepositoryReference;
 use uv_resolver::{Lock, Preference, PreferenceError};
 
@@ -36,7 +35,7 @@ pub async fn read_requirements_txt(
     // Parse the requirements from the lockfile.
     let requirements_txt = RequirementsTxt::parse(
         output_file,
-        std::env::current_dir()?,
+        &*CWD,
         &BaseClientBuilder::new().connectivity(Connectivity::Offline),
     )
     .await?;
@@ -58,44 +57,19 @@ pub async fn read_requirements_txt(
         // Ignore pinned versions for the specified packages.
         Upgrade::Packages(packages) => preferences
             .into_iter()
-            .filter(|preference| !packages.contains(preference.name()))
+            .filter(|preference| !packages.contains_key(preference.name()))
             .collect(),
     })
 }
 
 /// Load the preferred requirements from an existing lockfile, applying the upgrade strategy.
-pub async fn read_lockfile(workspace: &Workspace, upgrade: &Upgrade) -> Result<LockedRequirements> {
-    // As an optimization, skip reading the lockfile is we're upgrading all packages anyway.
-    if upgrade.is_all() {
-        return Ok(LockedRequirements::default());
-    }
-
-    // If an existing lockfile exists, build up a set of preferences.
-    let lockfile = workspace.root().join("uv.lock");
-    let lock = match fs_err::tokio::read_to_string(&lockfile).await {
-        Ok(encoded) => match toml::from_str::<Lock>(&encoded) {
-            Ok(lock) => lock,
-            Err(err) => {
-                eprint!("Failed to parse lockfile; ignoring locked requirements: {err}");
-                return Ok(LockedRequirements::default());
-            }
-        },
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(LockedRequirements::default());
-        }
-        Err(err) => return Err(err.into()),
-    };
-
+pub fn read_lock_requirements(lock: &Lock, upgrade: &Upgrade) -> LockedRequirements {
     let mut preferences = Vec::new();
     let mut git = Vec::new();
 
     for dist in lock.distributions() {
         // Skip the distribution if it's not included in the upgrade strategy.
-        if match upgrade {
-            Upgrade::None => false,
-            Upgrade::All => true,
-            Upgrade::Packages(packages) => packages.contains(dist.name()),
-        } {
+        if upgrade.contains(dist.name()) {
             continue;
         }
 
@@ -108,5 +82,5 @@ pub async fn read_lockfile(workspace: &Workspace, upgrade: &Upgrade) -> Result<L
         }
     }
 
-    Ok(LockedRequirements { preferences, git })
+    LockedRequirements { preferences, git }
 }

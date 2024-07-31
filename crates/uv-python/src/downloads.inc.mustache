@@ -1,0 +1,32 @@
+// DO NOT EDIT
+//
+// Generated with `{{generated_with}}`
+// From template at `{{generated_from}}`
+
+pub(crate) const PYTHON_DOWNLOADS: &[ManagedPythonDownload] = &[
+    {{#versions}}
+    ManagedPythonDownload {
+        key: PythonInstallationKey {
+            major: {{value.major}},
+            minor: {{value.minor}},
+            patch: {{value.patch}},
+            implementation: LenientImplementationName::Known(ImplementationName::{{value.name}}),
+            arch: Arch(target_lexicon::Architecture::{{value.arch}}),
+            os: Os(target_lexicon::OperatingSystem::{{value.os}}),
+            {{#value.libc}}
+            libc: Libc::Some(target_lexicon::Environment::{{.}}),
+            {{/value.libc}}
+            {{^value.libc}}
+            libc: Libc::None,
+            {{/value.libc}}
+        },
+        url: "{{value.url}}",
+        {{#value.sha256}}
+        sha256: Some("{{.}}")
+        {{/value.sha256}}
+        {{^value.sha256}}
+        sha256: None
+        {{/value.sha256}}
+    },
+    {{/versions}}
+];

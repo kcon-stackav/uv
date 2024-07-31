@@ -8,6 +8,7 @@ pub(crate) use cache_clean::cache_clean;
 pub(crate) use cache_dir::cache_dir;
 pub(crate) use cache_prune::cache_prune;
 use distribution_types::InstalledMetadata;
+pub(crate) use help::help;
 pub(crate) use pip::check::pip_check;
 pub(crate) use pip::compile::pip_compile;
 pub(crate) use pip::freeze::pip_freeze;
@@ -18,27 +19,35 @@ pub(crate) use pip::sync::pip_sync;
 pub(crate) use pip::tree::pip_tree;
 pub(crate) use pip::uninstall::pip_uninstall;
 pub(crate) use project::add::add;
+pub(crate) use project::init::init;
 pub(crate) use project::lock::lock;
 pub(crate) use project::remove::remove;
 pub(crate) use project::run::run;
 pub(crate) use project::sync::sync;
+pub(crate) use project::tree::tree;
+pub(crate) use python::dir::dir as python_dir;
+pub(crate) use python::find::find as python_find;
+pub(crate) use python::install::install as python_install;
+pub(crate) use python::list::list as python_list;
+pub(crate) use python::pin::pin as python_pin;
+pub(crate) use python::uninstall::uninstall as python_uninstall;
 #[cfg(feature = "self-update")]
 pub(crate) use self_update::self_update;
 pub(crate) use tool::dir::dir as tool_dir;
 pub(crate) use tool::install::install as tool_install;
 pub(crate) use tool::list::list as tool_list;
 pub(crate) use tool::run::run as tool_run;
+pub(crate) use tool::run::ToolRunCommand;
 pub(crate) use tool::uninstall::uninstall as tool_uninstall;
-pub(crate) use toolchain::dir::dir as toolchain_dir;
-pub(crate) use toolchain::find::find as toolchain_find;
-pub(crate) use toolchain::install::install as toolchain_install;
-pub(crate) use toolchain::list::list as toolchain_list;
-pub(crate) use toolchain::uninstall::uninstall as toolchain_uninstall;
+pub(crate) use tool::update_shell::update_shell as tool_update_shell;
 use uv_cache::Cache;
 use uv_fs::Simplified;
+use uv_git::GitResolver;
 use uv_installer::compile_tree;
 use uv_normalize::PackageName;
-use uv_toolchain::PythonEnvironment;
+use uv_python::PythonEnvironment;
+use uv_resolver::InMemoryIndex;
+use uv_types::InFlight;
 pub(crate) use venv::venv;
 pub(crate) use version::version;
 
@@ -47,11 +56,12 @@ use crate::printer::Printer;
 mod cache_clean;
 mod cache_dir;
 mod cache_prune;
+mod help;
 pub(crate) mod pip;
 mod project;
+mod python;
 pub(crate) mod reporters;
 mod tool;
-mod toolchain;
 
 #[cfg(feature = "self-update")]
 mod self_update;
@@ -143,9 +153,9 @@ pub(super) async fn compile_bytecode(
         printer.stderr(),
         "{}",
         format!(
-            "Bytecode compiled {} in {}",
+            "Bytecode compiled {} {}",
             format!("{files} file{s}").bold(),
-            elapsed(start.elapsed())
+            format!("in {}", elapsed(start.elapsed())).dimmed()
         )
         .dimmed()
     )?;
@@ -166,4 +176,15 @@ pub(super) fn human_readable_bytes(bytes: u64) -> (f32, &'static str) {
     let bytes = bytes as f32;
     let i = ((bytes.log2() / 10.0) as usize).min(UNITS.len() - 1);
     (bytes / 1024_f32.powi(i as i32), UNITS[i])
+}
+
+/// Shared state used during resolution and installation.
+#[derive(Default)]
+pub(crate) struct SharedState {
+    /// The resolved Git references.
+    pub(crate) git: GitResolver,
+    /// The fetched package versions and metadata.
+    pub(crate) index: InMemoryIndex,
+    /// The downloaded distributions.
+    pub(crate) in_flight: InFlight,
 }

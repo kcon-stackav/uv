@@ -89,7 +89,7 @@ Functionality for interacting with Git repositories.
 
 Functionality for installing Python packages into a virtual environment.
 
-## [uv-toolchain](./uv-toolchain)
+## [uv-python](./uv-python)
 
 Functionality for detecting and leveraging the current Python interpreter.
 
@@ -109,6 +109,10 @@ Utilities for reading package requirements from `pyproject.toml` and `requiremen
 
 Functionality for resolving Python packages and their dependencies.
 
+## [uv-shell](./uv-shell)
+
+Utilities for detecting and manipulating shell environments.
+
 ## [uv-types](./uv-types)
 
 Shared traits for uv, to avoid circular dependencies.
@@ -124,6 +128,10 @@ A `venv` replacement to create virtual environments in Rust.
 ## [uv-warnings](./uv-warnings)
 
 User-facing warnings for uv.
+
+## [uv-workspace](./uv-workspace)
+
+Workspace abstractions for uv.
 
 ## [requirements-txt](./requirements-txt)
 

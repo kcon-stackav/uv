@@ -23,10 +23,11 @@ use uv_configuration::{Concurrency, PreviewMode};
 use uv_distribution::DistributionDatabase;
 use uv_git::GitResolver;
 use uv_installer::{Installer, Plan, Planner, Preparer, SitePackages};
+use uv_python::{Interpreter, PythonEnvironment};
 use uv_resolver::{
     ExcludeNewer, FlatIndex, InMemoryIndex, Manifest, OptionsBuilder, PythonRequirement, Resolver,
+    ResolverMarkers,
 };
-use uv_toolchain::{Interpreter, PythonEnvironment};
 use uv_types::{BuildContext, BuildIsolation, EmptyInstalledPackages, HashStrategy, InFlight};
 
 /// The main implementation of [`BuildContext`], used by the CLI, see [`BuildContext`]
@@ -146,7 +147,7 @@ impl<'a> BuildContext for BuildDispatch<'a> {
                 .index_strategy(self.index_strategy)
                 .build(),
             &python_requirement,
-            Some(markers),
+            ResolverMarkers::SpecificEnvironment(markers.clone()),
             Some(tags),
             self.flat_index,
             self.index,
@@ -278,16 +279,18 @@ impl<'a> BuildContext for BuildDispatch<'a> {
         }
 
         // Install the resolved distributions.
-        let wheels = wheels.into_iter().chain(cached).collect::<Vec<_>>();
+        let mut wheels = wheels.into_iter().chain(cached).collect::<Vec<_>>();
         if !wheels.is_empty() {
             debug!(
                 "Installing build requirement{}: {}",
                 if wheels.len() == 1 { "" } else { "s" },
                 wheels.iter().map(ToString::to_string).join(", ")
             );
-            Installer::new(venv)
+            wheels = Installer::new(venv)
                 .with_link_mode(self.link_mode)
-                .install(&wheels)
+                .with_cache(self.cache)
+                .install(wheels)
+                .await
                 .context("Failed to install build dependencies")?;
         }
 

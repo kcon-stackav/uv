@@ -1,21 +1,20 @@
 use std::collections::BTreeMap;
 use std::fmt::Debug;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use async_http_range_reader::AsyncHttpRangeReader;
-use futures::{FutureExt, TryStreamExt};
+use futures::FutureExt;
 use http::HeaderMap;
 use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
-use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
+use tokio_util::compat::TokioAsyncReadCompatExt;
 use tracing::{info_span, instrument, trace, warn, Instrument};
 use url::Url;
 
 use distribution_filename::{DistFilename, SourceDistFilename, WheelFilename};
 use distribution_types::{BuiltDist, File, FileLocation, IndexUrl, IndexUrls, Name};
-use install_wheel_rs::metadata::{find_archive_dist_info, is_metadata_entry};
+use install_wheel_rs::metadata::find_archive_dist_info;
 use pep440_rs::Version;
 use pep508_rs::MarkerEnvironment;
 use platform_tags::Platform;
@@ -37,14 +36,8 @@ use crate::{CachedClient, CachedClientError, Error, ErrorKind};
 pub struct RegistryClientBuilder<'a> {
     index_urls: IndexUrls,
     index_strategy: IndexStrategy,
-    keyring: KeyringProviderType,
-    native_tls: bool,
-    retries: u32,
-    connectivity: Connectivity,
     cache: Cache,
-    client: Option<Client>,
-    markers: Option<&'a MarkerEnvironment>,
-    platform: Option<&'a Platform>,
+    base_client_builder: BaseClientBuilder<'a>,
 }
 
 impl RegistryClientBuilder<'_> {
@@ -52,14 +45,8 @@ impl RegistryClientBuilder<'_> {
         Self {
             index_urls: IndexUrls::default(),
             index_strategy: IndexStrategy::default(),
-            keyring: KeyringProviderType::default(),
-            native_tls: false,
             cache,
-            connectivity: Connectivity::Online,
-            retries: 3,
-            client: None,
-            markers: None,
-            platform: None,
+            base_client_builder: BaseClientBuilder::new(),
         }
     }
 }
@@ -79,25 +66,25 @@ impl<'a> RegistryClientBuilder<'a> {
 
     #[must_use]
     pub fn keyring(mut self, keyring_type: KeyringProviderType) -> Self {
-        self.keyring = keyring_type;
+        self.base_client_builder = self.base_client_builder.keyring(keyring_type);
         self
     }
 
     #[must_use]
     pub fn connectivity(mut self, connectivity: Connectivity) -> Self {
-        self.connectivity = connectivity;
+        self.base_client_builder = self.base_client_builder.connectivity(connectivity);
         self
     }
 
     #[must_use]
     pub fn retries(mut self, retries: u32) -> Self {
-        self.retries = retries;
+        self.base_client_builder = self.base_client_builder.retries(retries);
         self
     }
 
     #[must_use]
     pub fn native_tls(mut self, native_tls: bool) -> Self {
-        self.native_tls = native_tls;
+        self.base_client_builder = self.base_client_builder.native_tls(native_tls);
         self
     }
 
@@ -109,44 +96,27 @@ impl<'a> RegistryClientBuilder<'a> {
 
     #[must_use]
     pub fn client(mut self, client: Client) -> Self {
-        self.client = Some(client);
+        self.base_client_builder = self.base_client_builder.client(client);
         self
     }
 
     #[must_use]
     pub fn markers(mut self, markers: &'a MarkerEnvironment) -> Self {
-        self.markers = Some(markers);
+        self.base_client_builder = self.base_client_builder.markers(markers);
         self
     }
 
     #[must_use]
     pub fn platform(mut self, platform: &'a Platform) -> Self {
-        self.platform = Some(platform);
+        self.base_client_builder = self.base_client_builder.platform(platform);
         self
     }
 
     pub fn build(self) -> RegistryClient {
         // Build a base client
-        let mut builder = BaseClientBuilder::new();
+        let builder = self.base_client_builder;
 
-        if let Some(client) = self.client {
-            builder = builder.client(client);
-        }
-
-        if let Some(markers) = self.markers {
-            builder = builder.markers(markers);
-        }
-
-        if let Some(platform) = self.platform {
-            builder = builder.platform(platform);
-        }
-
-        let client = builder
-            .retries(self.retries)
-            .connectivity(self.connectivity)
-            .native_tls(self.native_tls)
-            .keyring(self.keyring)
-            .build();
+        let client = builder.build();
 
         let timeout = client.timeout();
         let connectivity = client.connectivity();
@@ -161,6 +131,17 @@ impl<'a> RegistryClientBuilder<'a> {
             connectivity,
             client,
             timeout,
+        }
+    }
+}
+
+impl<'a> From<BaseClientBuilder<'a>> for RegistryClientBuilder<'a> {
+    fn from(value: BaseClientBuilder<'a>) -> Self {
+        Self {
+            index_urls: IndexUrls::default(),
+            index_strategy: IndexStrategy::default(),
+            cache: Cache::temp().unwrap(),
+            base_client_builder: value,
         }
     }
 }
@@ -287,11 +268,7 @@ impl RegistryClient {
 
         let cache_entry = self.cache.entry(
             CacheBucket::Simple,
-            Path::new(&match index {
-                IndexUrl::Pypi(_) => "pypi".to_string(),
-                IndexUrl::Url(url) => cache_key::digest(&cache_key::CanonicalUrl::new(url)),
-                IndexUrl::Path(url) => cache_key::digest(&cache_key::CanonicalUrl::new(url)),
-            }),
+            WheelCache::Index(index).root(),
             format!("{package_name}.rkyv"),
         );
         let cache_control = match self.connectivity {
@@ -439,7 +416,7 @@ impl RegistryClient {
                         }
                     }
                     FileLocation::AbsoluteUrl(url) => {
-                        let url = Url::parse(url).map_err(ErrorKind::UrlParse)?;
+                        let url = url.to_url();
                         if url.scheme() == "file" {
                             let path = url
                                 .to_file_path()
@@ -616,8 +593,7 @@ impl RegistryClient {
             .instrument(info_span!("read_metadata_range_request", wheel = %filename))
         };
 
-        let result = self
-            .cached_client()
+        self.cached_client()
             .get_serde(
                 req,
                 &cache_entry,
@@ -625,66 +601,7 @@ impl RegistryClient {
                 read_metadata_range_request,
             )
             .await
-            .map_err(crate::Error::from);
-
-        match result {
-            Ok(metadata) => return Ok(metadata),
-            Err(err) => {
-                if err.is_http_range_requests_unsupported() {
-                    // The range request version failed. Fall back to streaming the file to search
-                    // for the METADATA file.
-                    warn!("Range requests not supported for {filename}; streaming wheel");
-                } else {
-                    return Err(err);
-                }
-            }
-        };
-
-        // Create a request to stream the file.
-        let req = self
-            .uncached_client()
-            .get(url.clone())
-            .header(
-                // `reqwest` defaults to accepting compressed responses.
-                // Specify identity encoding to get consistent .whl downloading
-                // behavior from servers. ref: https://github.com/pypa/pip/pull/1688
-                "accept-encoding",
-                reqwest::header::HeaderValue::from_static("identity"),
-            )
-            .build()
-            .map_err(ErrorKind::from)?;
-
-        // Stream the file, searching for the METADATA.
-        let read_metadata_stream = |response: Response| {
-            async {
-                let reader = response
-                    .bytes_stream()
-                    .map_err(|err| self.handle_response_errors(err))
-                    .into_async_read();
-
-                read_metadata_async_stream(filename, url.to_string(), reader).await
-            }
-            .instrument(info_span!("read_metadata_stream", wheel = %filename))
-        };
-
-        self.cached_client()
-            .get_serde(req, &cache_entry, cache_control, read_metadata_stream)
-            .await
             .map_err(crate::Error::from)
-    }
-
-    /// Handle a specific `reqwest` error, and convert it to [`io::Error`].
-    fn handle_response_errors(&self, err: reqwest::Error) -> std::io::Error {
-        if err.is_timeout() {
-            std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                format!(
-                    "Failed to download distribution due to network timeout. Try increasing UV_HTTP_TIMEOUT (current value: {}s).", self.timeout()
-                ),
-            )
-        } else {
-            std::io::Error::new(std::io::ErrorKind::Other, err)
-        }
     }
 }
 
@@ -724,50 +641,6 @@ async fn read_metadata_async_seek(
         ErrorKind::MetadataParseError(filename.clone(), debug_source, Box::new(err))
     })?;
     Ok(metadata)
-}
-
-/// Like [`read_metadata_async_seek`], but doesn't use seek.
-async fn read_metadata_async_stream<R: futures::AsyncRead + Unpin>(
-    filename: &WheelFilename,
-    debug_source: String,
-    reader: R,
-) -> Result<Metadata23, Error> {
-    let reader = futures::io::BufReader::with_capacity(128 * 1024, reader);
-    let mut zip = async_zip::base::read::stream::ZipFileReader::new(reader);
-
-    while let Some(mut entry) = zip
-        .next_with_entry()
-        .await
-        .map_err(|err| ErrorKind::Zip(filename.clone(), err))?
-    {
-        // Find the `METADATA` entry.
-        let path = entry
-            .reader()
-            .entry()
-            .filename()
-            .as_str()
-            .map_err(|err| ErrorKind::Zip(filename.clone(), err))?;
-
-        if is_metadata_entry(path, filename) {
-            let mut reader = entry.reader_mut().compat();
-            let mut contents = Vec::new();
-            reader.read_to_end(&mut contents).await.unwrap();
-
-            let metadata = Metadata23::parse_metadata(&contents).map_err(|err| {
-                ErrorKind::MetadataParseError(filename.clone(), debug_source, Box::new(err))
-            })?;
-            return Ok(metadata);
-        }
-
-        // Close current file to get access to the next one. See docs:
-        // https://docs.rs/async_zip/0.0.16/async_zip/base/read/stream/
-        zip = entry
-            .skip()
-            .await
-            .map_err(|err| ErrorKind::Zip(filename.clone(), err))?;
-    }
-
-    Err(ErrorKind::MetadataNotFound(filename.clone(), debug_source).into())
 }
 
 #[derive(

@@ -5,6 +5,11 @@ expression: result
 Ok(
     Lock {
         version: 1,
+        fork_markers: None,
+        requires_python: None,
+        resolution_mode: Highest,
+        prerelease_mode: IfNecessaryOrExplicit,
+        exclude_newer: None,
         distributions: [
             Distribution {
                 id: DistributionId {
@@ -32,27 +37,17 @@ Ok(
                 },
                 sdist: Some(
                     Url {
-                        url: Url {
-                            scheme: "https",
-                            cannot_be_a_base: false,
-                            username: "",
-                            password: None,
-                            host: Some(
-                                Domain(
-                                    "example.com",
-                                ),
-                            ),
-                            port: None,
-                            path: "/",
-                            query: None,
-                            fragment: None,
-                        },
+                        url: UrlString(
+                            "https://example.com",
+                        ),
                         metadata: SourceDistMetadata {
-                            hash: Hash(
-                                HashDigest {
-                                    algorithm: Sha256,
-                                    digest: "37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3",
-                                },
+                            hash: Some(
+                                Hash(
+                                    HashDigest {
+                                        algorithm: Sha256,
+                                        digest: "37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3",
+                                    },
+                                ),
                             ),
                             size: Some(
                                 0,
@@ -61,6 +56,7 @@ Ok(
                     },
                 ),
                 wheels: [],
+                fork_markers: None,
                 dependencies: [],
                 optional_dependencies: {},
                 dev_dependencies: {},
@@ -91,27 +87,17 @@ Ok(
                 },
                 sdist: Some(
                     Url {
-                        url: Url {
-                            scheme: "https",
-                            cannot_be_a_base: false,
-                            username: "",
-                            password: None,
-                            host: Some(
-                                Domain(
-                                    "example.com",
-                                ),
-                            ),
-                            port: None,
-                            path: "/",
-                            query: None,
-                            fragment: None,
-                        },
+                        url: UrlString(
+                            "https://example.com",
+                        ),
                         metadata: SourceDistMetadata {
-                            hash: Hash(
-                                HashDigest {
-                                    algorithm: Sha256,
-                                    digest: "37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3",
-                                },
+                            hash: Some(
+                                Hash(
+                                    HashDigest {
+                                        algorithm: Sha256,
+                                        digest: "37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3",
+                                    },
+                                ),
                             ),
                             size: Some(
                                 0,
@@ -120,6 +106,7 @@ Ok(
                     },
                 ),
                 wheels: [],
+                fork_markers: None,
                 dependencies: [
                     Dependency {
                         distribution_id: DistributionId {
@@ -145,7 +132,7 @@ Ok(
                                 },
                             ),
                         },
-                        extra: None,
+                        extra: {},
                         marker: None,
                     },
                 ],
@@ -153,7 +140,6 @@ Ok(
                 dev_dependencies: {},
             },
         ],
-        requires_python: None,
         by_id: {
             DistributionId {
                 name: PackageName(

@@ -197,7 +197,7 @@ impl<T: Pep508Url + Display> Display for Requirement<T> {
 }
 
 /// <https://github.com/serde-rs/serde/issues/908#issuecomment-298027413>
-impl<'de, T: Pep508Url + Deserialize<'de>> Deserialize<'de> for Requirement<T> {
+impl<'de, T: Pep508Url> Deserialize<'de> for Requirement<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -489,6 +489,25 @@ impl Reporter for TracingReporter {
     }
 }
 
+#[cfg(feature = "schemars")]
+impl<T: Pep508Url> schemars::JsonSchema for Requirement<T> {
+    fn schema_name() -> String {
+        "Requirement".to_string()
+    }
+
+    fn json_schema(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        schemars::schema::SchemaObject {
+            instance_type: Some(schemars::schema::InstanceType::String.into()),
+            metadata: Some(Box::new(schemars::schema::Metadata {
+                description: Some("A PEP 508 dependency specifier".to_string()),
+                ..schemars::schema::Metadata::default()
+            })),
+            ..schemars::schema::SchemaObject::default()
+        }
+        .into()
+    }
+}
+
 impl<T: Pep508Url> FromStr for Requirement<T> {
     type Err = Pep508Error<T>;
 
@@ -532,11 +551,6 @@ impl Extras {
     pub fn parse<T: Pep508Url>(input: &str) -> Result<Self, Pep508Error<T>> {
         Ok(Self(parse_extras_cursor(&mut Cursor::new(input))?))
     }
-
-    /// Convert the [`Extras`] into a [`Vec`] of [`ExtraName`].
-    pub fn into_vec(self) -> Vec<ExtraName> {
-        self.0
-    }
 }
 
 /// The actual version specifier or URL to install.
@@ -548,6 +562,15 @@ pub enum VersionOrUrl<T: Pep508Url = VerbatimUrl> {
     Url(T),
 }
 
+impl<T: Pep508Url> Display for VersionOrUrl<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::VersionSpecifier(version_specifier) => Display::fmt(version_specifier, f),
+            Self::Url(url) => Display::fmt(url, f),
+        }
+    }
+}
+
 /// Unowned version specifier or URL to install.
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum VersionOrUrlRef<'a, T: Pep508Url = VerbatimUrl> {
@@ -555,6 +578,15 @@ pub enum VersionOrUrlRef<'a, T: Pep508Url = VerbatimUrl> {
     VersionSpecifier(&'a VersionSpecifiers),
     /// A installable URL
     Url(&'a T),
+}
+
+impl<T: Pep508Url> Display for VersionOrUrlRef<'_, T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::VersionSpecifier(version_specifier) => Display::fmt(version_specifier, f),
+            Self::Url(url) => Display::fmt(url, f),
+        }
+    }
 }
 
 impl<'a> From<&'a VersionOrUrl> for VersionOrUrlRef<'a> {
@@ -1006,7 +1038,7 @@ fn parse_pep508_requirement<T: Pep508Url>(
     let marker = if cursor.peek_char() == Some(';') {
         // Skip past the semicolon
         cursor.next();
-        Some(marker::parse_markers_cursor(cursor, reporter)?)
+        Some(marker::parse::parse_markers_cursor(cursor, reporter)?)
     } else {
         None
     };
@@ -1087,8 +1119,7 @@ mod tests {
 
     use crate::cursor::Cursor;
     use crate::marker::{
-        parse_markers_cursor, MarkerExpression, MarkerOperator, MarkerTree, MarkerValueString,
-        MarkerValueVersion,
+        parse, MarkerExpression, MarkerOperator, MarkerTree, MarkerValueString, MarkerValueVersion,
     };
     use crate::{Requirement, TracingReporter, VerbatimUrl, VersionOrUrl};
 
@@ -1423,9 +1454,11 @@ mod tests {
     #[test]
     fn test_marker_parsing() {
         let marker = r#"python_version == "2.7" and (sys_platform == "win32" or (os_name == "linux" and implementation_name == 'cpython'))"#;
-        let actual =
-            parse_markers_cursor::<VerbatimUrl>(&mut Cursor::new(marker), &mut TracingReporter)
-                .unwrap();
+        let actual = parse::parse_markers_cursor::<VerbatimUrl>(
+            &mut Cursor::new(marker),
+            &mut TracingReporter,
+        )
+        .unwrap();
         let expected = MarkerTree::And(vec![
             MarkerTree::Expression(MarkerExpression::Version {
                 key: MarkerValueVersion::PythonVersion,
@@ -1767,8 +1800,11 @@ mod tests {
 
     #[test]
     fn no_space_after_operator() {
+        let requirement = Requirement::<Url>::from_str("pytest;python_version<='4.0'").unwrap();
+        assert_eq!(requirement.to_string(), "pytest ; python_version <= '4.0'");
+
         let requirement = Requirement::<Url>::from_str("pytest;'4.0'>=python_version").unwrap();
-        assert_eq!(requirement.to_string(), "pytest ; '4.0' >= python_version");
+        assert_eq!(requirement.to_string(), "pytest ; python_version <= '4.0'");
     }
 
     #[test]

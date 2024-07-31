@@ -106,7 +106,7 @@ fn missing_requirements_in() {
     let context = TestContext::new("3.12");
     let requirements_in = context.temp_dir.child("requirements.in");
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 2
@@ -163,7 +163,7 @@ dependencies = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml"), @r###"
     success: true
     exit_code: 0
@@ -204,7 +204,7 @@ dependencies = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml"), @r###"
     success: true
     exit_code: 0
@@ -244,7 +244,7 @@ dependencies = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("--annotation-style=line")
             .arg("pyproject.toml"), @r###"
     success: true
@@ -274,7 +274,7 @@ fn compile_constraints_txt() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("idna<3.4")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt"), @r###"
@@ -311,7 +311,7 @@ fn compile_constraints_inline() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("idna<3.4")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -341,7 +341,7 @@ fn compile_constraints_markers() -> Result<()> {
     constraints_txt.write_str("sniffio==1.2.0;python_version<='3.7'")?;
     constraints_txt.write_str("sniffio==1.3.0;python_version>'3.7'")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt"), @r###"
@@ -380,7 +380,7 @@ fn compile_constraint_extra() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("flask[dotenv]<24.3.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt"), @r###"
@@ -435,7 +435,7 @@ optional-dependencies.foo = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .arg("--extra")
             .arg("foo"), @r###"
@@ -478,7 +478,7 @@ optional-dependencies."FrIeNdLy-._.-bArD" = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .arg("--extra")
             .arg("FRiENDlY-...-_-BARd"), @r###"
@@ -521,7 +521,7 @@ optional-dependencies.foo = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .arg("--extra")
             .arg("bar"), @r###"
@@ -563,7 +563,7 @@ build-backend = "poetry.core.masonry.api"
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .arg("--extra")
             .arg("test"), @r###"
@@ -624,7 +624,7 @@ build-backend = "poetry.core.masonry.api"
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml"), @r###"
     success: true
     exit_code: 0
@@ -679,7 +679,7 @@ build-backend = "poetry.core.masonry.api"
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml"), @r###"
     success: false
     exit_code: 2
@@ -738,7 +738,7 @@ setup(
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .arg("--extra")
             .arg("dev"), @r###"
@@ -796,7 +796,7 @@ setup(
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("setup.cfg")
             .arg("--extra")
             .arg("dev"), @r###"
@@ -844,7 +844,7 @@ setup(
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("setup.py")
             .arg("--extra")
             .arg("dev"), @r###"
@@ -926,7 +926,7 @@ optional-dependencies.foo = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .arg("--extra")
             .arg("foo")
@@ -953,7 +953,7 @@ fn compile_requirements_file_extra() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio==3.7.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--all-extras"),
             @r###"
@@ -987,7 +987,7 @@ optional-dependencies.foo = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .arg("--extra")
             .arg("invalid name!"), @r###"
@@ -1012,7 +1012,7 @@ fn compile_python_312() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--python-version")
             .arg("3.12"), @r###"
@@ -1049,7 +1049,7 @@ fn compile_python_312_annotation_line() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("--annotation-style=line")
             .arg("requirements.in")
             .arg("--python-version")
@@ -1081,7 +1081,7 @@ fn compile_python_312_no_deps() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-deps")
             .arg("--python-version")
@@ -1131,7 +1131,7 @@ fn compile_python_37() -> Result<()> {
 
     ----- stderr -----
       × No solution found when resolving dependencies:
-      ╰─▶ Because the requested Python version (3.7) does not satisfy Python>=3.8 and black==23.10.1 depends on Python>=3.8, we can conclude that black==23.10.1 cannot be used.
+      ╰─▶ Because the requested Python version (3.7.0) does not satisfy Python>=3.8 and black==23.10.1 depends on Python>=3.8, we can conclude that black==23.10.1 cannot be used.
           And because you require black==23.10.1, we can conclude that the requirements are unsatisfiable.
     "###);
 
@@ -1146,7 +1146,7 @@ fn compile_sdist_resolution_lowest() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio @ https://files.pythonhosted.org/packages/2d/b8/7333d87d5f03247215d86a86362fd3e324111788c6cdd8d2e6196a6ba833/anyio-4.2.0.tar.gz")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--resolution=lowest-direct")
             .arg("--python-version")
@@ -1178,7 +1178,7 @@ fn compile_python_invalid_version() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--python-version")
             .arg("3.7.x"), @r###"
@@ -1203,7 +1203,7 @@ fn compile_python_dev_version() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--python-version")
             .arg("3.7-dev"), @r###"
@@ -1232,7 +1232,7 @@ fn omit_non_matching_annotation() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("idna <3.7; python_version < '3.7'")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("-c")
             .arg("constraints.txt"), @r###"
@@ -1265,7 +1265,7 @@ fn compile_numpy_py38() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("numpy")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-build"), @r###"
     success: true
@@ -1291,7 +1291,7 @@ fn compile_wheel_url_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask @ https://files.pythonhosted.org/packages/36/42/015c23096649b908c809c69388a805a571a3bea44362fe87e33fc3afa01f/flask-3.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1332,7 +1332,7 @@ fn compile_sdist_url_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask @ https://files.pythonhosted.org/packages/d8/09/c1a7354d3925a3c6c8cfdebf4245bae67d633ffda1ba415add06ffc839c5/flask-3.0.0.tar.gz")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1407,7 +1407,7 @@ fn compile_git_branch_https_dependency() -> Result<()> {
         "uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage@test-branch",
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1435,7 +1435,7 @@ fn compile_git_tag_https_dependency() -> Result<()> {
         "uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage@test-tag",
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1465,7 +1465,7 @@ fn compile_git_date_tag_https_dependency() -> Result<()> {
         "uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage@20240402",
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1493,7 +1493,7 @@ fn compile_git_long_commit_https_dependency() -> Result<()> {
         "uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage@0dacfd662c64cb4ceb16e6cf65a157a8b715b979",
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1521,7 +1521,7 @@ fn compile_git_short_commit_https_dependency() -> Result<()> {
         "uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage@0dacfd6",
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1548,7 +1548,7 @@ fn compile_git_refs_https_dependency() -> Result<()> {
     requirements_in
         .write_str("uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage@refs/pull/4/head")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1574,7 +1574,7 @@ fn compile_git_subdirectory_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("example-pkg-a @ git+https://github.com/pypa/sample-namespace-packages.git@df7530eeb8fa0cb7dbb8ecb28363e8e36bfa2f45#subdirectory=pkg_resources/pkg_a")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1601,7 +1601,7 @@ fn compile_git_concurrent_access() -> Result<()> {
     requirements_in
         .write_str("example-pkg-a @ git+https://github.com/pypa/sample-namespace-packages.git@df7530eeb8fa0cb7dbb8ecb28363e8e36bfa2f45#subdirectory=pkg_resources/pkg_a\nexample-pkg-b @ git+https://github.com/pypa/sample-namespace-packages.git@df7530eeb8fa0cb7dbb8ecb28363e8e36bfa2f45#subdirectory=pkg_resources/pkg_b")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1630,7 +1630,7 @@ fn compile_git_unnamed_concurrent_access() -> Result<()> {
     requirements_in
         .write_str("git+https://github.com/pypa/sample-namespace-packages.git@df7530eeb8fa0cb7dbb8ecb28363e8e36bfa2f45#subdirectory=pkg_resources/pkg_a\ngit+https://github.com/pypa/sample-namespace-packages.git@df7530eeb8fa0cb7dbb8ecb28363e8e36bfa2f45#subdirectory=pkg_resources/pkg_b")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1659,7 +1659,7 @@ fn compile_git_mismatched_name() -> Result<()> {
     requirements_in
         .write_str("flask @ git+https://github.com/pallets/flask.git@2.0.0\ndask @ git+https://github.com/pallets/flask.git@3.0.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 2
@@ -1683,7 +1683,7 @@ fn compile_git_subdirectory_static_metadata() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("uv-public-pypackage @ git+https://github.com/astral-test/uv-workspace-pypackage#subdirectory=uv-public-pypackage")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1709,7 +1709,7 @@ fn mixed_url_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask==3.0.0\nwerkzeug @ https://files.pythonhosted.org/packages/c3/fc/254c3e9b5feb89ff5b9076a23218dafbc99c96ac5941e900b71206e6313b/werkzeug-3.0.1-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1751,7 +1751,7 @@ fn conflicting_direct_url_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("werkzeug==3.0.0\nwerkzeug @ https://files.pythonhosted.org/packages/ff/1d/960bb4017c68674a1cb099534840f18d3def3ce44aed12b5ed8b78e0153e/Werkzeug-2.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 1
@@ -1774,7 +1774,7 @@ fn compatible_direct_url_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("werkzeug==2.0.0\nwerkzeug @ https://files.pythonhosted.org/packages/ff/1d/960bb4017c68674a1cb099534840f18d3def3ce44aed12b5ed8b78e0153e/Werkzeug-2.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1799,7 +1799,7 @@ fn conflicting_repeated_url_dependency_version_mismatch() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("werkzeug @ https://files.pythonhosted.org/packages/bd/24/11c3ea5a7e866bf2d97f0501d0b4b1c9bbeade102bb4b588f0d2919a5212/Werkzeug-2.0.1-py3-none-any.whl\nwerkzeug @ https://files.pythonhosted.org/packages/ff/1d/960bb4017c68674a1cb099534840f18d3def3ce44aed12b5ed8b78e0153e/Werkzeug-2.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 2
@@ -1826,7 +1826,7 @@ fn conflicting_repeated_url_dependency_markers() -> Result<()> {
         werkzeug @ https://files.pythonhosted.org/packages/ff/1d/960bb4017c68674a1cb099534840f18d3def3ce44aed12b5ed8b78e0153e/Werkzeug-2.0.0-py3-none-any.whl ; python_version < '3.10'
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1854,7 +1854,7 @@ fn conflicting_repeated_url_dependency_version_match() -> Result<()> {
 
     requirements_in.write_str("werkzeug @ git+https://github.com/pallets/werkzeug.git@2.0.0\nwerkzeug @ https://files.pythonhosted.org/packages/ff/1d/960bb4017c68674a1cb099534840f18d3def3ce44aed12b5ed8b78e0153e/Werkzeug-2.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 2
@@ -1877,7 +1877,7 @@ fn conflicting_transitive_url_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask==3.0.0\nwerkzeug @ https://files.pythonhosted.org/packages/ff/1d/960bb4017c68674a1cb099534840f18d3def3ce44aed12b5ed8b78e0153e/Werkzeug-2.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 1
@@ -1903,7 +1903,7 @@ fn compatible_repeated_url_dependency() -> Result<()> {
         uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage@0.0.2
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1932,7 +1932,7 @@ fn conflicting_repeated_url_dependency() -> Result<()> {
         uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage.git@0.0.1
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 2
@@ -1960,7 +1960,7 @@ fn compatible_narrowed_url_dependency() -> Result<()> {
         uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage.git@b270df1a2fb5d012294e9aaf05e7e0bab1e6a389
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -1990,7 +1990,7 @@ fn compatible_broader_url_dependency() -> Result<()> {
         uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage.git@0.0.2
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -2020,7 +2020,7 @@ fn compatible_repeated_narrowed_url_dependency() -> Result<()> {
         uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage.git@0.0.2
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -2053,7 +2053,7 @@ fn incompatible_narrowed_url_dependency() -> Result<()> {
         uv-public-pypackage @ git+https://github.com/astral-test/uv-public-pypackage@test-branch
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 2
@@ -2078,7 +2078,7 @@ fn allowed_transitive_git_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("hatchling_editable @ https://github.com/astral-sh/uv/files/14762645/hatchling_editable.zip")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -2111,7 +2111,7 @@ fn allowed_transitive_url_dependency() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("iniconfig @ git+https://github.com/pytest-dev/iniconfig@9cae43103df70bac6fde7b9f35ad11a9f1be0cb4")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--constraint")
         .arg("constraints.txt"), @r###"
@@ -2149,7 +2149,7 @@ fn allowed_transitive_canonical_url_dependency() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("iniconfig @ git+https://github.com/pytest-dev/iniconfig.git@9cae43103df70bac6fde7b9f35ad11a9f1be0cb4")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--constraint")
         .arg("constraints.txt"), @r###"
@@ -2184,7 +2184,7 @@ fn allowed_transitive_url_path_dependency() -> Result<()> {
     requirements_in.write_str("hatchling_editable @ ${HATCH_PATH}")?;
 
     let hatchling_path = current_dir()?.join("../../scripts/packages/hatchling_editable");
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .env("HATCH_PATH", hatchling_path.as_os_str()), @r###"
     success: true
@@ -2220,7 +2220,7 @@ fn requirement_constraint_override_url() -> Result<()> {
     let overrides_txt = context.temp_dir.child("overrides.txt");
     overrides_txt.write_str("anyio==3.7.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--constraint")
         .arg("constraints.txt")
@@ -2252,7 +2252,7 @@ fn requirement_override_prerelease() -> Result<()> {
     let overrides_txt = context.temp_dir.child("overrides.txt");
     overrides_txt.write_str("flask<2.0.1,!=2.0.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--override")
         .arg("overrides.txt"), @r###"
@@ -2306,7 +2306,7 @@ optional-dependencies.bar = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .arg("--all-extras"), @r###"
     success: true
@@ -2362,7 +2362,7 @@ optional-dependencies.bar = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("--annotation-style=line")
             .arg("pyproject.toml")
             .arg("--all-extras"), @r###"
@@ -2408,7 +2408,7 @@ optional-dependencies.bar = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .arg("--all-extras")
             .arg("--extra")
@@ -2446,7 +2446,7 @@ dependencies = ["anyio==3.7.0", "anyio==4.0.0"]
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml"), @r###"
     success: false
     exit_code: 1
@@ -2478,7 +2478,7 @@ dependencies = ["anyio==300.1.4"]
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml"), @r###"
     success: false
     exit_code: 1
@@ -2612,7 +2612,7 @@ fn compile_wheel_path_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask @ file:flask-3.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -2645,7 +2645,7 @@ fn compile_wheel_path_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask @ file://flask-3.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -2678,7 +2678,7 @@ fn compile_wheel_path_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask @ ./flask-3.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -2894,7 +2894,7 @@ fn compile_yanked_version_direct() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("attrs==21.1.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -2906,7 +2906,7 @@ fn compile_yanked_version_direct() -> Result<()> {
 
     ----- stderr -----
     Resolved 1 package in [TIME]
-    warning: `attrs==21.1.0` is yanked (reason: "Installable but not importable on Python 3.4.").
+    warning: `attrs==21.1.0` is yanked (reason: "Installable but not importable on Python 3.4.")
     "###
     );
 
@@ -2920,7 +2920,7 @@ fn compile_yanked_version_indirect() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("attrs>20.3.0,<21.2.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 1
@@ -2951,7 +2951,7 @@ fn override_dependency() -> Result<()> {
     let overrides_txt = context.temp_dir.child("overrides.txt");
     overrides_txt.write_str("werkzeug==2.3.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--override")
             .arg("overrides.txt"), @r###"
@@ -3007,7 +3007,7 @@ fn override_dependency_from_pyproject() -> Result<()> {
     "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .current_dir(&context.temp_dir)
             , @r###"
@@ -3043,6 +3043,50 @@ fn override_dependency_from_pyproject() -> Result<()> {
     Ok(())
 }
 
+/// Check that `tool.uv.constraint-dependencies` in `pyproject.toml` is respected.
+#[test]
+fn constraint_dependency_from_pyproject() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let pyproject_toml = context.temp_dir.child("pyproject.toml");
+    pyproject_toml.write_str(
+        r#"[project]
+    name = "example"
+    version = "0.0.0"
+    dependencies = [
+      "anyio==3.7.0"
+    ]
+
+    [tool.uv]
+    constraint-dependencies = [
+      "idna<3.4"
+    ]
+    "#,
+    )?;
+
+    uv_snapshot!(context.filters(), context.pip_compile()
+            .arg("pyproject.toml"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] pyproject.toml
+    anyio==3.7.0
+        # via example (pyproject.toml)
+    idna==3.3
+        # via
+        #   -c (workspace)
+        #   anyio
+    sniffio==1.3.1
+        # via anyio
+
+    ----- stderr -----
+    Resolved 3 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
 /// Check that `override-dependencies` in `uv.toml` is respected.
 #[test]
 fn override_dependency_from_specific_uv_toml() -> Result<()> {
@@ -3069,11 +3113,11 @@ fn override_dependency_from_specific_uv_toml() -> Result<()> {
         "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("pyproject.toml")
         .arg("--config-file")
         .arg("../uv/uv.toml")
-        .current_dir(&context.temp_dir.child("project"))
+        .current_dir(context.temp_dir.child("project"))
             , @r###"
     success: true
     exit_code: 0
@@ -3120,7 +3164,7 @@ fn override_multi_dependency() -> Result<()> {
         "tomli>=1.1.0; python_version >= '3.11'\ntomli<1.0.0; python_version < '3.11'",
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--override")
             .arg("overrides.txt"), @r###"
@@ -3154,6 +3198,37 @@ fn override_multi_dependency() -> Result<()> {
     Ok(())
 }
 
+/// `urllib3==2.2.2` has an optional dependency on `pysocks!=1.5.7,<2.0,>=1.5.6; extra == 'socks'`,
+/// So we shouldn't apply the `pysocks==1.7.1` override without the `socks` extra.
+#[test]
+fn dont_add_override_for_non_activated_extra() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str("urllib3==2.2.1")?;
+
+    let overrides_txt = context.temp_dir.child("overrides.txt");
+    overrides_txt.write_str("pysocks==1.7.1")?;
+
+    uv_snapshot!(context.filters(), context.pip_compile()
+        .arg("requirements.in")
+        .arg("--override")
+        .arg("overrides.txt"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --override overrides.txt
+    urllib3==2.2.1
+        # via -r requirements.in
+
+    ----- stderr -----
+    Resolved 1 package in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
 /// Check how invalid `tool.uv.override-dependencies` is handled in `pyproject.toml`.
 #[test]
 fn override_dependency_from_workspace_invalid_syntax() -> Result<()> {
@@ -3174,7 +3249,7 @@ fn override_dependency_from_workspace_invalid_syntax() -> Result<()> {
     "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .current_dir(&context.temp_dir)
             , @r###"
@@ -3210,7 +3285,7 @@ fn override_dependency_url() -> Result<()> {
     let overrides_txt = context.temp_dir.child("overrides.txt");
     overrides_txt.write_str("werkzeug @ https://files.pythonhosted.org/packages/cc/94/5f7079a0e00bd6863ef8f1da638721e9da21e5bacee597595b318f71d62e/Werkzeug-1.0.1-py2.py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--override")
             .arg("overrides.txt"), @r###"
@@ -3255,7 +3330,7 @@ fn override_dependency_unnamed_url() -> Result<()> {
     let overrides_txt = context.temp_dir.child("overrides.txt");
     overrides_txt.write_str("https://files.pythonhosted.org/packages/cc/94/5f7079a0e00bd6863ef8f1da638721e9da21e5bacee597595b318f71d62e/Werkzeug-1.0.1-py2.py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--override")
             .arg("overrides.txt"), @r###"
@@ -3296,7 +3371,7 @@ fn missing_registry_extra() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black[tensorboard]==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -3318,7 +3393,7 @@ fn missing_registry_extra() -> Result<()> {
 
     ----- stderr -----
     Resolved 6 packages in [TIME]
-    warning: The package `black==23.10.1` does not have an extra named `tensorboard`.
+    warning: The package `black==23.10.1` does not have an extra named `tensorboard`
     "###
     );
 
@@ -3332,7 +3407,7 @@ fn missing_url_extra() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask[tensorboard] @ https://files.pythonhosted.org/packages/36/42/015c23096649b908c809c69388a805a571a3bea44362fe87e33fc3afa01f/flask-3.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -3358,7 +3433,7 @@ fn missing_url_extra() -> Result<()> {
 
     ----- stderr -----
     Resolved 7 packages in [TIME]
-    warning: The package `flask @ https://files.pythonhosted.org/packages/36/42/015c23096649b908c809c69388a805a571a3bea44362fe87e33fc3afa01f/flask-3.0.0-py3-none-any.whl` does not have an extra named `tensorboard`.
+    warning: The package `flask @ https://files.pythonhosted.org/packages/36/42/015c23096649b908c809c69388a805a571a3bea44362fe87e33fc3afa01f/flask-3.0.0-py3-none-any.whl` does not have an extra named `tensorboard`
     "###
     );
 
@@ -3373,7 +3448,7 @@ fn preserve_url() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask @ https://files.PYTHONHOSTED.org/packages/36/42/015c23096649b908c809c69388a805a571a3bea44362fe87e33fc3afa01f/flask-3.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -3419,7 +3494,7 @@ fn preserve_project_root() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask @ file://${PROJECT_ROOT}/flask-3.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -3459,7 +3534,7 @@ fn respect_http_env_var() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask @ ${URL}")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .env("URL", "https://files.pythonhosted.org/packages/36/42/015c23096649b908c809c69388a805a571a3bea44362fe87e33fc3afa01f/flask-3.0.0-py3-none-any.whl"), @r###"
     success: true
@@ -3500,7 +3575,7 @@ fn respect_unnamed_env_var() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("${URL}")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .env("URL", "https://files.pythonhosted.org/packages/36/42/015c23096649b908c809c69388a805a571a3bea44362fe87e33fc3afa01f/flask-3.0.0-py3-none-any.whl"), @r###"
     success: true
@@ -3542,7 +3617,7 @@ fn error_missing_unnamed_env_var() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("${URL}")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 2
@@ -3572,7 +3647,7 @@ fn respect_file_env_var() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask @ ${FILE_PATH}")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .env("FILE_PATH", context.temp_dir.join("flask-3.0.0-py3-none-any.whl")), @r###"
     success: true
@@ -3876,7 +3951,7 @@ fn cache_errors_are_non_fatal() -> Result<()> {
     ];
 
     let check = || {
-        uv_snapshot!(context.pip_compile()
+        uv_snapshot!(context.filters(), context.pip_compile()
                 .arg("pip")
                 .arg("compile")
                 .arg(requirements_in.path())
@@ -3939,7 +4014,7 @@ fn compile_html() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("jinja2<=3.1.2")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .env_remove("UV_EXCLUDE_NEWER")
             .arg("requirements.in")
             .arg("--index-url")
@@ -3969,7 +4044,7 @@ fn trailing_slash() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("jinja2")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--index-url")
             .arg("https://test.pypi.org/simple"), @r###"
@@ -3988,7 +4063,7 @@ fn trailing_slash() -> Result<()> {
     "###
     );
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--index-url")
             .arg("https://test.pypi.org/simple/"), @r###"
@@ -4017,7 +4092,7 @@ fn compile_legacy_sdist_pep_517() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flake8 @ https://files.pythonhosted.org/packages/66/53/3ad4a3b74d609b3b9008a10075c40e7c8909eae60af53623c3888f7a529a/flake8-6.0.0.tar.gz")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -4048,7 +4123,7 @@ fn compile_legacy_sdist_setuptools() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flake8 @ https://files.pythonhosted.org/packages/66/53/3ad4a3b74d609b3b9008a10075c40e7c8909eae60af53623c3888f7a529a/flake8-6.0.0.tar.gz")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--legacy-setup-py"), @r###"
     success: true
@@ -4080,7 +4155,7 @@ fn generate_hashes_registry() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio==4.0.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--generate-hashes"), @r###"
     success: true
@@ -4116,7 +4191,7 @@ fn generate_hashes_source_distribution_url() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio @ https://files.pythonhosted.org/packages/2d/b8/7333d87d5f03247215d86a86362fd3e324111788c6cdd8d2e6196a6ba833/anyio-4.2.0.tar.gz")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--generate-hashes"), @r###"
     success: true
@@ -4151,7 +4226,7 @@ fn generate_hashes_built_distribution_url() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio @ https://files.pythonhosted.org/packages/14/fd/2f20c40b45e4fb4324834aea24bd4afdf1143390242c0b33774da0e2e34f/anyio-4.3.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--generate-hashes"), @r###"
     success: true
@@ -4186,7 +4261,7 @@ fn generate_hashes_git() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio @ git+https://github.com/agronholm/anyio@4.3.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--generate-hashes"), @r###"
     success: true
@@ -4220,7 +4295,7 @@ fn generate_hashes_unnamed_url() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("https://files.pythonhosted.org/packages/14/fd/2f20c40b45e4fb4324834aea24bd4afdf1143390242c0b33774da0e2e34f/anyio-4.3.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--generate-hashes"), @r###"
     success: true
@@ -4334,6 +4409,65 @@ fn generate_hashes_editable() -> Result<()> {
     Ok(())
 }
 
+/// Include hashes from a `--find-links` index in the generated output.
+#[test]
+fn generate_hashes_find_links_directory() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str("tqdm")?;
+
+    uv_snapshot!(context.filters(), context.pip_compile()
+        .arg("requirements.in")
+        .arg("--generate-hashes")
+        .arg("--find-links")
+        .arg(context.workspace_root.join("scripts").join("links")), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --generate-hashes
+    tqdm==1000.0.0 \
+        --hash=sha256:a34996d4bd5abb2336e14ff0a2d22b92cfd0f0ed344e6883041ce01953276a13
+        # via -r requirements.in
+
+    ----- stderr -----
+    Resolved 1 package in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// Include hashes from a `--find-links` index in the generated output.
+#[test]
+fn generate_hashes_find_links_url() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str("tqdm")?;
+
+    uv_snapshot!(context.filters(), context.pip_compile()
+        .arg("requirements.in")
+        .arg("--generate-hashes")
+        .arg("--no-index")
+        .arg("--find-links")
+        .arg("https://download.pytorch.org/whl/torch_stable.html"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --generate-hashes --no-index
+    tqdm==4.64.1 \
+        --hash=sha256:6fee160d6ffcd1b1c68c65f14c829c22832bc401726335ce92c52d395944a6a1
+        # via -r requirements.in
+
+    ----- stderr -----
+    Resolved 1 package in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
 /// Compile using `--find-links` with a local directory.
 #[test]
 fn find_links_directory() -> Result<()> {
@@ -4377,7 +4511,7 @@ fn find_links_url() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("tqdm")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-index")
             .arg("--find-links")
@@ -4405,7 +4539,7 @@ fn find_links_env_var() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("tqdm\n--find-links ${URL}")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-index")
             .env("URL", "https://download.pytorch.org/whl/torch_stable.html"), @r###"
@@ -4433,7 +4567,7 @@ fn find_links_requirements_txt() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("-f https://download.pytorch.org/whl/torch_stable.html\ntqdm")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-index")
             .arg("--emit-find-links"), @r###"
@@ -4467,7 +4601,7 @@ fn avoid_irrelevant_extras() -> Result<()> {
         extras[dev]
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--find-links")
             .arg(context.workspace_root.join("scripts").join("links")), @r###"
@@ -4520,7 +4654,7 @@ coverage = ["example[test]", "extras>=0.0.1,<=0.0.2"]
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("-e .[test,coverage]")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--find-links")
         .arg(context.workspace_root.join("scripts").join("links")), @r###"
@@ -4540,6 +4674,35 @@ coverage = ["example[test]", "extras>=0.0.1,<=0.0.2"]
     Resolved 3 packages in [TIME]
     "###
     );
+
+    Ok(())
+}
+
+/// Respect `requires-python` when prefetching.
+///
+/// `voluptuous==0.15.1` requires Python 3.9 or later, so we should resolve to an earlier version
+/// and avoiding building 0.15.1 at all.
+#[test]
+fn requires_python_prefetch() -> Result<()> {
+    let context = TestContext::new("3.8");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str("voluptuous<=0.15.1")?;
+
+    uv_snapshot!(context
+        .pip_compile()
+        .env_remove("UV_EXCLUDE_NEWER")
+        .arg("requirements.in"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in
+    voluptuous==0.14.2
+        # via -r requirements.in
+
+    ----- stderr -----
+    Resolved 1 package in [TIME]
+    "###);
 
     Ok(())
 }
@@ -4567,7 +4730,7 @@ fn upgrade_none() -> Result<()> {
             # via black
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--output-file")
         .arg("requirements.txt"), @r###"
@@ -4622,7 +4785,7 @@ fn upgrade_all() -> Result<()> {
             # via black
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--output-file")
         .arg("requirements.txt")
@@ -4678,7 +4841,7 @@ fn upgrade_package() -> Result<()> {
             # via black
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--output-file")
             .arg("requirements.txt")
@@ -4688,7 +4851,7 @@ fn upgrade_package() -> Result<()> {
     exit_code: 0
     ----- stdout -----
     # This file was autogenerated by uv via the following command:
-    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --output-file requirements.txt --upgrade-package click
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --output-file requirements.txt
     black==23.10.1
         # via -r requirements.in
     click==8.1.7
@@ -4704,6 +4867,61 @@ fn upgrade_package() -> Result<()> {
 
     ----- stderr -----
     Resolved 6 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// Upgrade a package with a constraint on the allowed upgrade.
+#[test]
+fn upgrade_constraint() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str("iniconfig")?;
+
+    let requirements_txt = context.temp_dir.child("requirements.txt");
+    requirements_txt.write_str(indoc! {r"
+        # This file was autogenerated by uv via the following command:
+        #    uv pip compile requirements.in --python-version 3.12 --cache-dir [CACHE_DIR]
+        iniconfig==1.0.0
+    "})?;
+
+    uv_snapshot!(context.filters(), context.pip_compile()
+            .arg("requirements.in")
+            .arg("--output-file")
+            .arg("requirements.txt")
+            .arg("--upgrade-package")
+            .arg("iniconfig<2"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --output-file requirements.txt
+    iniconfig==1.1.1
+        # via -r requirements.in
+
+    ----- stderr -----
+    Resolved 1 package in [TIME]
+    "###
+    );
+
+    uv_snapshot!(context.filters(), context.pip_compile()
+            .arg("requirements.in")
+            .arg("--output-file")
+            .arg("requirements.txt")
+            .arg("-P")
+            .arg("iniconfig"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --output-file requirements.txt
+    iniconfig==2.0.0
+        # via -r requirements.in
+
+    ----- stderr -----
+    Resolved 1 package in [TIME]
     "###
     );
 
@@ -4788,7 +5006,7 @@ fn unnamed_requirement_with_package_name() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("https://files.pythonhosted.org/packages/36/42/015c23096649b908c809c69388a805a571a3bea44362fe87e33fc3afa01f/flask-3.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -4827,7 +5045,7 @@ fn no_annotate() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-annotate"), @r###"
     success: true
@@ -4857,7 +5075,7 @@ fn no_header() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-header"), @r###"
     success: true
@@ -4891,7 +5109,7 @@ fn custom_compile_command() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--custom-compile-command")
             .arg("./custom-uv-compile.sh"), @r###"
@@ -4919,7 +5137,7 @@ fn custom_compile_command() -> Result<()> {
     );
 
     // with env var
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .env("UV_CUSTOM_COMPILE_COMMAND", "./custom-uv-compile.sh"), @r###"
     success: true
@@ -4955,7 +5173,7 @@ fn allow_unsafe() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("werkzeug==3.0.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--allow-unsafe"), @r###"
     success: true
@@ -4969,7 +5187,7 @@ fn allow_unsafe() -> Result<()> {
         # via -r requirements.in
 
     ----- stderr -----
-    warning: pip-compile's `--allow-unsafe` has no effect (uv can safely pin `pip` and other packages).
+    warning: pip-compile's `--allow-unsafe` has no effect (uv can safely pin `pip` and other packages)
     Resolved 2 packages in [TIME]
     "###
     );
@@ -4984,7 +5202,7 @@ fn resolver_legacy() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("werkzeug==3.0.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--resolver=legacy"), @r###"
     success: false
@@ -4992,7 +5210,7 @@ fn resolver_legacy() -> Result<()> {
     ----- stdout -----
 
     ----- stderr -----
-    error: pip-compile's `--resolver=legacy` is unsupported (uv always backtracks).
+    error: pip-compile's `--resolver=legacy` is unsupported (uv always backtracks)
     "###
     );
 
@@ -5007,7 +5225,7 @@ fn emit_index_urls() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--emit-index-url")
             .arg("--index-url")
@@ -5050,7 +5268,7 @@ fn emit_find_links() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--emit-find-links")
             .arg("--find-links")
@@ -5083,6 +5301,35 @@ fn emit_find_links() -> Result<()> {
     Ok(())
 }
 
+/// Emit the `--find-links` locations using a relative path in a requirements file. The verbatim
+/// path should be preserved.
+#[test]
+fn emit_find_links_relative() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str("-f ./\niniconfig")?;
+
+    uv_snapshot!(context.filters(), context.pip_compile()
+            .arg("requirements.in")
+            .arg("--emit-find-links"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --emit-find-links
+    --find-links ./
+
+    iniconfig==2.0.0
+        # via -r requirements.in
+
+    ----- stderr -----
+    Resolved 1 package in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
 /// Emit the `--no-binary` and `--only-binary` options.
 #[test]
 fn emit_build_options() -> Result<()> {
@@ -5090,7 +5337,7 @@ fn emit_build_options() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("black==23.10.1")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--emit-build-options")
             .arg("--only-binary")
@@ -5133,7 +5380,7 @@ fn no_index_requirements_txt() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("--no-index\ntqdm")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 1
@@ -5159,7 +5406,7 @@ fn index_url_requirements_txt() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("--index-url https://google.com\ntqdm")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--index-url")
             .arg("https://pypi.org/simple"), @r###"
@@ -5189,7 +5436,7 @@ fn conflicting_index_urls_requirements_txt() -> Result<()> {
     let constraints_in = context.temp_dir.child("constraints.in");
     constraints_in.write_str("--index-url https://wikipedia.org\nflask")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.in"), @r###"
@@ -5215,7 +5462,7 @@ fn matching_index_urls_requirements_txt() -> Result<()> {
     let constraints_in = context.temp_dir.child("constraints.in");
     constraints_in.write_str("--index-url https://pypi.org/simple")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.in"), @r###"
@@ -5241,7 +5488,7 @@ fn offline_registry() -> Result<()> {
     requirements_in.write_str("black==23.10.1")?;
 
     // Resolve with `--offline` with an empty cache.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--offline"), @r###"
     success: false
@@ -5257,7 +5504,7 @@ fn offline_registry() -> Result<()> {
     );
 
     // Populate the cache.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -5283,7 +5530,7 @@ fn offline_registry() -> Result<()> {
     );
 
     // Resolve with `--offline` with a populated cache.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--offline"), @r###"
     success: true
@@ -5321,7 +5568,7 @@ fn offline_registry_backtrack() -> Result<()> {
     requirements_in.write_str("iniconfig==1.1.1")?;
 
     // Populate the cache.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -5340,7 +5587,7 @@ fn offline_registry_backtrack() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("iniconfig")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--offline"), @r###"
     success: true
@@ -5370,7 +5617,7 @@ fn offline_find_links() -> Result<()> {
     // Resolve with `--offline` and `--find-links`. We indicate that the network was disabled,
     // since both the `--find-links` and the registry lookups fail (but, importantly, we don't error
     // when failing to fetch the `--find-links` URL).
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--find-links")
             .arg("https://download.pytorch.org/whl/torch_stable.html")
@@ -5388,7 +5635,7 @@ fn offline_find_links() -> Result<()> {
     );
 
     // Resolve with `--offline`, `--find-links`, and `--no-index`.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--find-links")
             .arg("https://download.pytorch.org/whl/torch_stable.html")
@@ -5417,7 +5664,7 @@ fn offline_direct_url() -> Result<()> {
     requirements_in.write_str("iniconfig @ https://files.pythonhosted.org/packages/ef/a6/62565a6e1cf69e10f5727360368e451d4b7f58beeac6173dc9db836a5b46/iniconfig-2.0.0-py3-none-any.whl")?;
 
     // Resolve with `--offline` with an empty cache.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--offline"), @r###"
     success: false
@@ -5431,7 +5678,7 @@ fn offline_direct_url() -> Result<()> {
     );
 
     // Populate the cache.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -5447,7 +5694,7 @@ fn offline_direct_url() -> Result<()> {
     );
 
     // Resolve with `--offline` with a populated cache.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--offline"), @r###"
     success: true
@@ -5475,7 +5722,7 @@ fn invalid_metadata_requires_python() -> Result<()> {
     requirements_in.write_str("validation==2.0.0")?;
 
     // `2.0.0` has invalid metadata.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-index")
             .arg("--find-links")
@@ -5507,7 +5754,7 @@ fn invalid_metadata_multiple_dist_info() -> Result<()> {
     requirements_in.write_str("validation==3.0.0")?;
 
     // `3.0.0` has an invalid structure (multiple `.dist-info` directories).
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-index")
             .arg("--find-links")
@@ -5537,7 +5784,7 @@ fn invalid_metadata_backtrack() -> Result<()> {
 
     // `2.0.0` and `3.0.0` have invalid metadata. We should backtrack to `1.0.0` (the preceding
     // version, which has valid metadata).
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-index")
             .arg("--find-links")
@@ -5703,7 +5950,7 @@ fn compile_constraints_compatible_url() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("anyio @ https://files.pythonhosted.org/packages/bf/cd/d6d9bb1dadf73e7af02d18225cbd2c93f8552e13130484f1c8dcfece292b/anyio-4.2.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt"), @r###"
@@ -5740,7 +5987,7 @@ fn compile_constraints_compatible_url_version() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("anyio>4")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt"), @r###"
@@ -5777,7 +6024,7 @@ fn compile_constraints_incompatible_url() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("anyio @ https://files.pythonhosted.org/packages/bf/cd/d6d9bb1dadf73e7af02d18225cbd2c93f8552e13130484f1c8dcfece292b/anyio-4.2.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt"), @r###"
@@ -5802,7 +6049,7 @@ fn index_url_in_requirements() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("--index-url https://download.pytorch.org/whl\nanyio<4")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 1
@@ -5825,7 +6072,7 @@ fn index_url_from_command_line() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("--index-url https://download.pytorch.org/whl\nanyio<4")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--index-url")
             .arg("https://pypi.org/simple"), @r###"
@@ -5857,7 +6104,7 @@ fn unsupported_scheme() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio @ bzr+https://example.com/anyio")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 2
@@ -5881,7 +6128,7 @@ fn no_deps_valid_extra() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask[dotenv]")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-deps"), @r###"
     success: true
@@ -5907,7 +6154,7 @@ fn no_deps_invalid_extra() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask[empty]")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-deps"), @r###"
     success: true
@@ -5920,7 +6167,7 @@ fn no_deps_invalid_extra() -> Result<()> {
 
     ----- stderr -----
     Resolved 1 package in [TIME]
-    warning: The package `flask==3.0.2` does not have an extra named `empty`.
+    warning: The package `flask==3.0.2` does not have an extra named `empty`
     "###
     );
 
@@ -6017,7 +6264,7 @@ fn editable_invalid_extra() -> Result<()> {
 
     ----- stderr -----
     Resolved 1 package in [TIME]
-    warning: The package `black @ file://[WORKSPACE]/scripts/packages/black_editable` does not have an extra named `empty`.
+    warning: The package `black @ file://[WORKSPACE]/scripts/packages/black_editable` does not have an extra named `empty`
     "###);
 
     Ok(())
@@ -6030,7 +6277,7 @@ fn no_strip_extra() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask[dotenv]")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-strip-extras"), @r###"
     success: true
@@ -6073,7 +6320,7 @@ fn no_strip_extras() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio[trio]\nanyio[doc]")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-strip-extras"), @r###"
     success: true
@@ -6172,7 +6419,7 @@ fn no_strip_markers() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio ; python_version > '3.11'")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-strip-markers")
             .arg("--python-platform")
@@ -6208,7 +6455,7 @@ fn no_strip_markers_multiple_markers() -> Result<()> {
         trio ; sys_platform == 'win32'
     "})?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-strip-markers")
             .arg("--python-platform")
@@ -6253,7 +6500,7 @@ fn no_strip_markers_transitive_marker() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("trio ; python_version > '3.11'")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--no-strip-markers")
             .arg("--python-platform")
@@ -6308,23 +6555,23 @@ fn universal() -> Result<()> {
     ----- stdout -----
     # This file was autogenerated by uv via the following command:
     #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
-    attrs==23.2.0 ; python_version > '3.11' or sys_platform == 'win32'
+    attrs==23.2.0
         # via
         #   outcome
         #   trio
-    cffi==1.16.0 ; implementation_name != 'pypy' and os_name == 'nt' and (python_version > '3.11' or sys_platform == 'win32')
+    cffi==1.16.0 ; implementation_name != 'pypy' and os_name == 'nt'
         # via trio
-    idna==3.6 ; python_version > '3.11' or sys_platform == 'win32'
+    idna==3.6
         # via trio
-    outcome==1.3.0.post0 ; python_version > '3.11' or sys_platform == 'win32'
+    outcome==1.3.0.post0
         # via trio
-    pycparser==2.21 ; implementation_name != 'pypy' and os_name == 'nt' and (python_version > '3.11' or sys_platform == 'win32')
+    pycparser==2.21 ; implementation_name != 'pypy' and os_name == 'nt'
         # via cffi
-    sniffio==1.3.1 ; python_version > '3.11' or sys_platform == 'win32'
+    sniffio==1.3.1
         # via trio
-    sortedcontainers==2.4.0 ; python_version > '3.11' or sys_platform == 'win32'
+    sortedcontainers==2.4.0
         # via trio
-    trio==0.25.0 ; python_version > '3.11' or sys_platform == 'win32'
+    trio==0.25.0
         # via -r requirements.in
 
     ----- stderr -----
@@ -6365,7 +6612,7 @@ fn universal_conflicting() -> Result<()> {
         # via trio
     outcome==1.3.0.post0 ; sys_platform == 'darwin' or sys_platform == 'win32'
         # via trio
-    pycparser==2.21 ; (implementation_name != 'pypy' and os_name == 'nt' and sys_platform == 'darwin') or (os_name == 'nt' and sys_platform == 'win32')
+    pycparser==2.21 ; (sys_platform == 'darwin' or sys_platform == 'win32') and ((implementation_name != 'pypy' and os_name == 'nt' and sys_platform == 'darwin') or (os_name == 'nt' and sys_platform == 'win32'))
         # via cffi
     sniffio==1.3.1 ; sys_platform == 'darwin' or sys_platform == 'win32'
         # via trio
@@ -6507,13 +6754,13 @@ fn universal_constraint_marker() -> Result<()> {
     ----- stdout -----
     # This file was autogenerated by uv via the following command:
     #    uv pip compile --cache-dir [CACHE_DIR] requirements.in -c constraints.txt --universal
-    anyio==3.0.0 ; sys_platform == 'win32' or (os_name == 'nt' and sys_platform == 'win32')
+    anyio==3.0.0 ; sys_platform == 'win32'
         # via
         #   -c constraints.txt
         #   -r requirements.in
-    idna==3.6 ; sys_platform == 'win32' or (os_name == 'nt' and sys_platform == 'win32')
+    idna==3.6 ; sys_platform == 'win32'
         # via anyio
-    sniffio==1.3.1 ; sys_platform == 'win32' or (os_name == 'nt' and sys_platform == 'win32')
+    sniffio==1.3.1 ; sys_platform == 'win32'
         # via anyio
 
     ----- stderr -----
@@ -6564,6 +6811,942 @@ fn universal_multi_version() -> Result<()> {
     Ok(())
 }
 
+// Requested distinct local versions with disjoint markers.
+#[test]
+fn universal_disjoint_locals() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc::indoc! {r"
+        --find-links https://download.pytorch.org/whl/torch_stable.html
+
+        torch==2.0.0+cu118 ; platform_machine == 'x86_64'
+        torch==2.0.0+cpu ; platform_machine != 'x86_64'
+    "})?;
+
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .arg("requirements.in")
+            .arg("--universal"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cmake==3.28.4 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    filelock==3.13.1
+        # via
+        #   torch
+        #   triton
+    jinja2==3.1.3
+        # via torch
+    lit==18.1.2 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    markupsafe==2.1.5
+        # via jinja2
+    mpmath==1.3.0
+        # via sympy
+    networkx==3.2.1
+        # via torch
+    sympy==1.12
+        # via torch
+    torch==2.0.0+cpu ; platform_machine != 'x86_64'
+        # via -r requirements.in
+    torch==2.0.0+cu118 ; platform_machine == 'x86_64'
+        # via
+        #   -r requirements.in
+        #   triton
+    triton==2.0.0 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    typing-extensions==4.10.0
+        # via torch
+
+    ----- stderr -----
+    Resolved 12 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+// Requested distinct local versions with disjoint markers of a package
+// that is also present as a transitive dependency.
+#[test]
+fn universal_transitive_disjoint_locals() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc::indoc! {r"
+        --find-links https://download.pytorch.org/whl/torch_stable.html
+
+        torch==2.0.0+cu118 ; platform_machine == 'x86_64'
+        torch==2.0.0+cpu ; platform_machine != 'x86_64'
+        torchvision==0.15.1
+    "})?;
+
+    // Some marker expressions on the output here are missing due to https://github.com/astral-sh/uv/issues/5086,
+    // but the local versions are still respected correctly.
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .arg("requirements.in")
+            .arg("--universal"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    certifi==2024.2.2
+        # via requests
+    charset-normalizer==3.3.2
+        # via requests
+    cmake==3.28.4 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    filelock==3.13.1
+        # via
+        #   torch
+        #   triton
+    idna==3.6
+        # via requests
+    jinja2==3.1.3
+        # via torch
+    lit==18.1.2 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    markupsafe==2.1.5
+        # via jinja2
+    mpmath==1.3.0
+        # via sympy
+    networkx==3.2.1
+        # via torch
+    numpy==1.26.4
+        # via torchvision
+    pillow==10.2.0
+        # via torchvision
+    requests==2.31.0
+        # via torchvision
+    sympy==1.12
+        # via torch
+    torch==2.0.0+cpu ; platform_machine != 'x86_64'
+        # via
+        #   -r requirements.in
+        #   torchvision
+    torch==2.0.0+cu118 ; platform_machine == 'x86_64'
+        # via
+        #   -r requirements.in
+        #   torchvision
+        #   triton
+    torchvision==0.15.1
+        # via -r requirements.in
+    triton==2.0.0 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    typing-extensions==4.10.0
+        # via torch
+    urllib3==2.2.1
+        # via requests
+
+    ----- stderr -----
+    Resolved 20 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// Prefer local versions for dependencies of path requirements.
+#[test]
+fn universal_local_path_requirement() -> Result<()> {
+    let context = TestContext::new("3.12");
+
+    let pyproject_toml = context.temp_dir.child("pyproject.toml");
+    pyproject_toml.write_str(indoc! {r#"
+        [project]
+        name = "example"
+        version = "0.0.0"
+        dependencies = [
+            "torch==2.0.0+cu118"
+        ]
+        requires-python = ">=3.11"
+    "#})?;
+
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc! {"
+        torch==2.0.0
+        .
+    "})?;
+
+    uv_snapshot!(context.filters(), context.pip_compile()
+        .arg("requirements.in")
+        .arg("--universal")
+        .arg("--find-links")
+        .arg("https://download.pytorch.org/whl/torch_stable.html"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cmake==3.28.4 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    .
+        # via -r requirements.in
+    filelock==3.13.1
+        # via
+        #   torch
+        #   triton
+    jinja2==3.1.3
+        # via torch
+    lit==18.1.2 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    markupsafe==2.1.5
+        # via jinja2
+    mpmath==1.3.0
+        # via sympy
+    networkx==3.2.1
+        # via torch
+    sympy==1.12
+        # via torch
+    torch==2.0.0+cu118
+        # via
+        #   -r requirements.in
+        #   example
+        #   triton
+    triton==2.0.0 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    typing-extensions==4.10.0
+        # via torch
+
+    ----- stderr -----
+    Resolved 12 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// If a dependency requests a local version with an overlapping marker expression,
+/// we should prefer the local in both forks.
+#[test]
+fn universal_overlapping_local_requirement() -> Result<()> {
+    let context = TestContext::new("3.12");
+
+    let pyproject_toml = context.temp_dir.child("pyproject.toml");
+    pyproject_toml.write_str(indoc! {r#"
+        [project]
+        name = "example"
+        version = "0.0.0"
+        dependencies = [
+            "torch==2.0.0+cu118 ; platform_machine == 'x86_64'"
+        ]
+        requires-python = ">=3.11"
+    "#})?;
+
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc! {"
+        torch==2.0.0
+        .
+    "})?;
+
+    uv_snapshot!(context.filters(), context.pip_compile()
+        .arg("requirements.in")
+        .arg("--universal")
+        .arg("--find-links")
+        .arg("https://download.pytorch.org/whl/torch_stable.html"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cmake==3.28.4 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    .
+        # via -r requirements.in
+    filelock==3.13.1
+        # via
+        #   torch
+        #   triton
+    jinja2==3.1.3
+        # via torch
+    lit==18.1.2 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    markupsafe==2.1.5
+        # via jinja2
+    mpmath==1.3.0
+        # via sympy
+    networkx==3.2.1
+        # via torch
+    sympy==1.12
+        # via torch
+    torch==2.0.0+cu118
+        # via
+        #   -r requirements.in
+        #   example
+        #   triton
+    triton==2.0.0 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    typing-extensions==4.10.0
+        # via torch
+
+    ----- stderr -----
+    Resolved 12 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// If a dependency requests distinct local versions with disjoint marker expressions,
+/// we should fork the root requirement.
+#[test]
+fn universal_disjoint_local_requirement() -> Result<()> {
+    let context = TestContext::new("3.12");
+
+    let pyproject_toml = context.temp_dir.child("pyproject.toml");
+    pyproject_toml.write_str(indoc! {r#"
+        [project]
+        name = "example"
+        version = "0.0.0"
+        dependencies = [
+            "torch==2.0.0+cu118 ; platform_machine == 'x86_64'",
+            "torch==2.0.0+cpu ; platform_machine != 'x86_64'"
+        ]
+        requires-python = ">=3.11"
+    "#})?;
+
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc! {"
+        torch==2.0.0
+        .
+    "})?;
+
+    // Some marker expressions on the output here are missing due to https://github.com/astral-sh/uv/issues/5086,
+    // but the local versions are still respected correctly.
+    uv_snapshot!(context.filters(), context.pip_compile()
+        .arg("requirements.in")
+        .arg("--universal")
+        .arg("--find-links")
+        .arg("https://download.pytorch.org/whl/torch_stable.html"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cmake==3.28.4 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    .
+        # via -r requirements.in
+    filelock==3.13.1
+        # via
+        #   torch
+        #   triton
+    jinja2==3.1.3
+        # via torch
+    lit==18.1.2 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    markupsafe==2.1.5
+        # via jinja2
+    mpmath==1.3.0
+        # via sympy
+    networkx==3.2.1
+        # via torch
+    sympy==1.12
+        # via torch
+    torch==2.0.0+cpu ; platform_machine != 'x86_64'
+        # via
+        #   -r requirements.in
+        #   example
+    torch==2.0.0+cu118 ; platform_machine == 'x86_64'
+        # via
+        #   -r requirements.in
+        #   example
+        #   triton
+    triton==2.0.0 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    typing-extensions==4.10.0
+        # via torch
+
+    ----- stderr -----
+    Resolved 13 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// If a dependency requests distinct local versions and non-local versions with disjoint marker
+/// expressions, we should fork the root requirement.
+#[test]
+fn universal_disjoint_base_or_local_requirement() -> Result<()> {
+    let context = TestContext::new("3.12");
+
+    let pyproject_toml = context.temp_dir.child("pyproject.toml");
+    pyproject_toml.write_str(indoc! {r#"
+        [project]
+        name = "example"
+        version = "0.0.0"
+        dependencies = [
+            "torch==2.0.0; python_version < '3.10'",
+            "torch==2.0.0+cu118 ; python_version >= '3.10' and python_version <= '3.12'",
+            "torch==2.0.0+cpu ; python_version > '3.12'"
+        ]
+        requires-python = ">=3.11"
+    "#})?;
+
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc! {"
+        torch==2.0.0
+        .
+    "})?;
+
+    // Some marker expressions on the output here are missing due to https://github.com/astral-sh/uv/issues/5086,
+    // but the local versions are still respected correctly.
+    uv_snapshot!(context.filters(), context.pip_compile()
+        .arg("requirements.in")
+        .arg("--universal")
+        .arg("--find-links")
+        .arg("https://download.pytorch.org/whl/torch_stable.html"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cmake==3.28.4 ; python_version <= '3.12' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    .
+        # via -r requirements.in
+    filelock==3.13.1
+        # via
+        #   torch
+        #   triton
+    jinja2==3.1.3
+        # via torch
+    lit==18.1.2 ; python_version <= '3.12' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    markupsafe==2.1.5
+        # via jinja2
+    mpmath==1.3.0
+        # via sympy
+    networkx==3.2.1
+        # via torch
+    sympy==1.12
+        # via torch
+    torch==2.0.0+cpu
+        # via
+        #   -r requirements.in
+        #   example
+    torch==2.0.0+cu118 ; python_version <= '3.12'
+        # via
+        #   -r requirements.in
+        #   example
+        #   triton
+    triton==2.0.0 ; python_version <= '3.12' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    typing-extensions==4.10.0
+        # via torch
+
+    ----- stderr -----
+    Resolved 13 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// If a dependency requests a local version with an overlapping marker expression
+/// that form a nested fork, we should prefer the local in both children of the outer
+/// fork.
+#[test]
+fn universal_nested_overlapping_local_requirement() -> Result<()> {
+    let context = TestContext::new("3.12");
+
+    let pyproject_toml = context.temp_dir.child("pyproject.toml");
+    pyproject_toml.write_str(indoc! {r#"
+        [project]
+        name = "example"
+        version = "0.0.0"
+        dependencies = [
+            "torch==2.0.0+cu118 ; platform_machine == 'x86_64' and os_name == 'Linux'"
+        ]
+        requires-python = ">=3.11"
+    "#})?;
+
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc! {"
+        torch==2.0.0 ; platform_machine == 'x86_64'
+        torch==2.3.0 ; platform_machine != 'x86_64'
+        .
+    "})?;
+
+    uv_snapshot!(context.filters(), context.pip_compile()
+        .arg("requirements.in")
+        .arg("--universal")
+        .arg("--find-links")
+        .arg("https://download.pytorch.org/whl/torch_stable.html"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cmake==3.28.4 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    .
+        # via -r requirements.in
+    filelock==3.13.1
+        # via
+        #   torch
+        #   triton
+    fsspec==2024.3.1 ; platform_machine != 'x86_64'
+        # via torch
+    intel-openmp==2021.4.0 ; platform_machine != 'x86_64' and platform_system == 'Windows'
+        # via mkl
+    jinja2==3.1.3
+        # via torch
+    lit==18.1.2 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    markupsafe==2.1.5
+        # via jinja2
+    mkl==2021.4.0 ; platform_machine != 'x86_64' and platform_system == 'Windows'
+        # via torch
+    mpmath==1.3.0
+        # via sympy
+    networkx==3.2.1
+        # via torch
+    sympy==1.12
+        # via torch
+    tbb==2021.11.0 ; platform_machine != 'x86_64' and platform_system == 'Windows'
+        # via mkl
+    torch==2.0.0+cu118 ; platform_machine == 'x86_64'
+        # via
+        #   -r requirements.in
+        #   example
+        #   triton
+    torch==2.3.0 ; platform_machine != 'x86_64'
+        # via -r requirements.in
+    triton==2.0.0 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    typing-extensions==4.10.0
+        # via torch
+
+    ----- stderr -----
+    Resolved 17 packages in [TIME]
+    "###
+    );
+
+    // A similar case, except the nested marker is now on the path requirement.
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc! {"
+        torch==2.0.0 ; platform_machine == 'x86_64'
+        torch==2.3.0 ; platform_machine != 'x86_64'
+        . ; os_name == 'Linux'
+    "})?;
+
+    let pyproject_toml = context.temp_dir.child("pyproject.toml");
+    pyproject_toml.write_str(indoc! {r#"
+        [project]
+        name = "example"
+        version = "0.0.0"
+        dependencies = [
+            "torch==2.0.0+cu118 ; platform_machine == 'x86_64'",
+        ]
+        requires-python = ">=3.11"
+    "#})?;
+
+    uv_snapshot!(context.filters(), context.pip_compile()
+        .arg("requirements.in")
+        .arg("--universal")
+        .arg("--find-links")
+        .arg("https://download.pytorch.org/whl/torch_stable.html"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cmake==3.28.4 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    . ; os_name == 'Linux'
+        # via -r requirements.in
+    filelock==3.13.1
+        # via
+        #   torch
+        #   triton
+    fsspec==2024.3.1 ; platform_machine != 'x86_64'
+        # via torch
+    intel-openmp==2021.4.0 ; platform_machine != 'x86_64' and platform_system == 'Windows'
+        # via mkl
+    jinja2==3.1.3
+        # via torch
+    lit==18.1.2 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    markupsafe==2.1.5
+        # via jinja2
+    mkl==2021.4.0 ; platform_machine != 'x86_64' and platform_system == 'Windows'
+        # via torch
+    mpmath==1.3.0
+        # via sympy
+    networkx==3.2.1
+        # via torch
+    sympy==1.12
+        # via torch
+    tbb==2021.11.0 ; platform_machine != 'x86_64' and platform_system == 'Windows'
+        # via mkl
+    torch==2.0.0+cu118 ; platform_machine == 'x86_64'
+        # via
+        #   -r requirements.in
+        #   example
+        #   triton
+    torch==2.3.0 ; platform_machine != 'x86_64'
+        # via -r requirements.in
+    triton==2.0.0 ; platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    typing-extensions==4.10.0
+        # via torch
+
+    ----- stderr -----
+    Resolved 17 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// If a dependency requests distinct local versions with disjoint marker expressions
+/// that form a nested fork, we should create a nested fork.
+#[test]
+fn universal_nested_disjoint_local_requirement() -> Result<()> {
+    let context = TestContext::new("3.12");
+
+    let pyproject_toml = context.temp_dir.child("pyproject.toml");
+    pyproject_toml.write_str(indoc! {r#"
+        [project]
+        name = "example"
+        version = "0.0.0"
+        dependencies = [
+            "torch==2.0.0+cu118 ; platform_machine == 'x86_64'",
+            "torch==2.0.0+cpu ; platform_machine != 'x86_64'"
+        ]
+        requires-python = ">=3.11"
+    "#})?;
+
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc! {"
+        torch==2.0.0 ; os_name == 'Linux'
+        torch==2.3.0 ; os_name != 'Linux'
+        . ; os_name == 'Linux'
+    "})?;
+
+    // Some marker expressions on the output here are missing due to https://github.com/astral-sh/uv/issues/5086,
+    // but the local versions are still respected correctly.
+    uv_snapshot!(context.filters(), context.pip_compile()
+        .arg("requirements.in")
+        .arg("--universal")
+        .arg("--find-links")
+        .arg("https://download.pytorch.org/whl/torch_stable.html"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cmake==3.28.4 ; os_name == 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    . ; os_name == 'Linux'
+        # via -r requirements.in
+    filelock==3.13.1 ; os_name != 'Linux' or (os_name == 'Linux' and platform_machine == 'x86_64') or (os_name == 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux') or (os_name == 'Linux' and platform_machine != 'x86_64')
+        # via
+        #   torch
+        #   triton
+    fsspec==2024.3.1 ; os_name != 'Linux'
+        # via torch
+    intel-openmp==2021.4.0 ; os_name != 'Linux' and platform_system == 'Windows'
+        # via mkl
+    jinja2==3.1.3 ; os_name != 'Linux' or (os_name == 'Linux' and platform_machine == 'x86_64') or (os_name == 'Linux' and platform_machine != 'x86_64')
+        # via torch
+    lit==18.1.2 ; os_name == 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via triton
+    markupsafe==2.1.5 ; os_name != 'Linux' or (os_name == 'Linux' and platform_machine == 'x86_64') or (os_name == 'Linux' and platform_machine != 'x86_64')
+        # via jinja2
+    mkl==2021.4.0 ; os_name != 'Linux' and platform_system == 'Windows'
+        # via torch
+    mpmath==1.3.0 ; os_name != 'Linux' or (os_name == 'Linux' and platform_machine == 'x86_64') or (os_name == 'Linux' and platform_machine != 'x86_64')
+        # via sympy
+    networkx==3.2.1 ; os_name != 'Linux' or (os_name == 'Linux' and platform_machine == 'x86_64') or (os_name == 'Linux' and platform_machine != 'x86_64')
+        # via torch
+    nvidia-cublas-cu12==12.1.3.1 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via
+        #   nvidia-cudnn-cu12
+        #   nvidia-cusolver-cu12
+        #   torch
+    nvidia-cuda-cupti-cu12==12.1.105 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    nvidia-cuda-nvrtc-cu12==12.1.105 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    nvidia-cuda-runtime-cu12==12.1.105 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    nvidia-cudnn-cu12==8.9.2.26 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    nvidia-cufft-cu12==11.0.2.54 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    nvidia-curand-cu12==10.3.2.106 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    nvidia-cusolver-cu12==11.4.5.107 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    nvidia-cusparse-cu12==12.1.0.106 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via
+        #   nvidia-cusolver-cu12
+        #   torch
+    nvidia-nccl-cu12==2.20.5 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    nvidia-nvjitlink-cu12==12.4.99 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via
+        #   nvidia-cusolver-cu12
+        #   nvidia-cusparse-cu12
+    nvidia-nvtx-cu12==12.1.105 ; os_name != 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    sympy==1.12 ; os_name != 'Linux' or (os_name == 'Linux' and platform_machine == 'x86_64') or (os_name == 'Linux' and platform_machine != 'x86_64')
+        # via torch
+    tbb==2021.11.0 ; os_name != 'Linux' and platform_system == 'Windows'
+        # via mkl
+    torch==2.0.0+cpu ; os_name == 'Linux'
+        # via
+        #   -r requirements.in
+        #   example
+    torch==2.0.0+cu118 ; os_name == 'Linux'
+        # via
+        #   -r requirements.in
+        #   example
+        #   triton
+    torch==2.3.0 ; os_name != 'Linux'
+        # via -r requirements.in
+    triton==2.0.0 ; os_name == 'Linux' and platform_machine == 'x86_64' and platform_system == 'Linux'
+        # via torch
+    typing-extensions==4.10.0 ; os_name != 'Linux' or (os_name == 'Linux' and platform_machine == 'x86_64') or (os_name == 'Linux' and platform_machine != 'x86_64')
+        # via torch
+
+    ----- stderr -----
+    Resolved 30 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+// Requested distinct prerelease strategies with disjoint markers.
+#[test]
+fn universal_disjoint_prereleases() -> Result<()> {
+    static EXCLUDE_NEWER: &str = "2024-07-17T00:00:00Z";
+
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc::indoc! {r"
+        cffi ; os_name == 'linux'
+        cffi >= 1.17.0rc1 ; os_name != 'linux'
+    "})?;
+
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .env("UV_EXCLUDE_NEWER", EXCLUDE_NEWER)
+            .arg("requirements.in")
+            .arg("--universal"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cffi==1.16.0 ; os_name == 'linux'
+        # via -r requirements.in
+    cffi==1.17.0rc1 ; os_name != 'linux'
+        # via -r requirements.in
+    pycparser==2.22
+        # via cffi
+
+    ----- stderr -----
+    Resolved 3 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+// Requested distinct prerelease strategies with disjoint markers for a package
+// that is also present as a transitive dependency.
+#[test]
+fn universal_transitive_disjoint_prerelease_requirement() -> Result<()> {
+    static EXCLUDE_NEWER: &str = "2024-07-17T00:00:00Z";
+
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc::indoc! {r"
+        cffi ; os_name == 'linux'
+        cffi >= 1.17.0rc1 ; os_name != 'linux'
+        cryptography
+    "})?;
+
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .env("UV_EXCLUDE_NEWER", EXCLUDE_NEWER)
+            .arg("requirements.in")
+            .arg("--universal"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cffi==1.16.0 ; os_name == 'linux' or platform_python_implementation != 'PyPy'
+        # via
+        #   -r requirements.in
+        #   cryptography
+    cffi==1.17.0rc1 ; os_name != 'linux' or platform_python_implementation != 'PyPy'
+        # via
+        #   -r requirements.in
+        #   cryptography
+    cryptography==42.0.8
+        # via -r requirements.in
+    pycparser==2.22
+        # via cffi
+
+    ----- stderr -----
+    Resolved 4 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+// Ensure that the global prerelease mode is respected across forks.
+#[test]
+fn universal_prerelease_mode() -> Result<()> {
+    static EXCLUDE_NEWER: &str = "2024-07-17T00:00:00Z";
+
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc::indoc! {r"
+        cffi ; os_name == 'linux'
+        cffi >= 1.17.0rc1 ; os_name != 'linux'
+    "})?;
+
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .env("UV_EXCLUDE_NEWER", EXCLUDE_NEWER)
+            .arg("--prerelease=allow")
+            .arg("requirements.in")
+            .arg("--universal"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] --prerelease=allow requirements.in --universal
+    cffi==1.17.0rc1
+        # via -r requirements.in
+    pycparser==2.22
+        # via cffi
+
+    ----- stderr -----
+    Resolved 2 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// If a dependency requests a prerelease version with an overlapping marker expression,
+/// we should prefer the prerelease version in both forks.
+#[test]
+fn universal_overlapping_prerelease_requirement() -> Result<()> {
+    static EXCLUDE_NEWER: &str = "2024-07-17T00:00:00Z";
+
+    let context = TestContext::new("3.12");
+
+    let pyproject_toml = context.temp_dir.child("pyproject.toml");
+    pyproject_toml.write_str(indoc! {r#"
+        [project]
+        name = "example"
+        version = "0.0.0"
+        dependencies = [
+            "cffi >= 1.17.0rc1 ; os_name == 'Linux'"
+        ]
+        requires-python = ">=3.11"
+    "#})?;
+
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc! {"
+        cffi
+        .
+    "})?;
+
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .env("UV_EXCLUDE_NEWER", EXCLUDE_NEWER)
+            .arg("requirements.in")
+            .arg("--universal"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cffi==1.17.0rc1
+        # via
+        #   -r requirements.in
+        #   example
+    .
+        # via -r requirements.in
+    pycparser==2.22
+        # via cffi
+
+    ----- stderr -----
+    Resolved 3 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// If a dependency requests distinct prerelease strategies with disjoint marker expressions,
+/// we should fork the root requirement.
+#[test]
+fn universal_disjoint_prerelease_requirement() -> Result<()> {
+    static EXCLUDE_NEWER: &str = "2024-07-17T00:00:00Z";
+
+    let context = TestContext::new("3.12");
+
+    let pyproject_toml = context.temp_dir.child("pyproject.toml");
+    pyproject_toml.write_str(indoc! {r#"
+        [project]
+        name = "example"
+        version = "0.0.0"
+        dependencies = [
+            "cffi >= 1.17.0rc1 ; os_name == 'Linux'",
+            "cffi==1.15.0 ; os_name != 'Linux'"
+        ]
+        requires-python = ">=3.11"
+    "#})?;
+
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc! {"
+        cffi
+        .
+    "})?;
+
+    // Some marker expressions on the output here are missing due to https://github.com/astral-sh/uv/issues/5086,
+    // but the prerelease versions are still respected correctly.
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .env("UV_EXCLUDE_NEWER", EXCLUDE_NEWER)
+            .arg("requirements.in")
+            .arg("--universal"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in --universal
+    cffi==1.15.0 ; os_name != 'Linux'
+        # via
+        #   -r requirements.in
+        #   example
+    cffi==1.17.0rc1 ; os_name == 'Linux'
+        # via
+        #   -r requirements.in
+        #   example
+    .
+        # via -r requirements.in
+    pycparser==2.22
+        # via cffi
+
+    ----- stderr -----
+    Resolved 4 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
 /// Perform a universal resolution that requires narrowing the supported Python range in one of the
 /// fork branches.
 #[test]
@@ -6599,6 +7782,346 @@ fn universal_requires_python() -> Result<()> {
     Ok(())
 }
 
+/// Perform a universal resolution that requires narrowing the supported Python range in a non-fork.
+///
+/// This should resolve successfully, but currently fails [1].
+///
+/// [1]: https://github.com/astral-sh/uv/issues/4668
+#[test]
+fn universal_requires_python_incomplete() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc::indoc! {r"
+        uv; python_version >= '3.8'
+    "})?;
+
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .arg("requirements.in")
+            .arg("-p")
+            .arg("3.7")
+            .arg("--universal"), @r###"
+    success: false
+    exit_code: 1
+    ----- stdout -----
+
+    ----- stderr -----
+    warning: The requested Python version 3.7 is not available; 3.12.[X] will be used to build dependencies instead.
+      × No solution found when resolving dependencies:
+      ╰─▶ Because only the following versions of uv{python_version >= '3.8'} are available:
+              uv{python_version >= '3.8'}==0.0.5
+              uv{python_version >= '3.8'}==0.1.0
+              uv{python_version >= '3.8'}==0.1.1
+              uv{python_version >= '3.8'}==0.1.2
+              uv{python_version >= '3.8'}==0.1.3
+              uv{python_version >= '3.8'}==0.1.4
+              uv{python_version >= '3.8'}==0.1.5
+              uv{python_version >= '3.8'}==0.1.6
+              uv{python_version >= '3.8'}==0.1.7
+              uv{python_version >= '3.8'}==0.1.8
+              uv{python_version >= '3.8'}==0.1.9
+              uv{python_version >= '3.8'}==0.1.10
+              uv{python_version >= '3.8'}==0.1.11
+              uv{python_version >= '3.8'}==0.1.12
+              uv{python_version >= '3.8'}==0.1.13
+              uv{python_version >= '3.8'}==0.1.14
+              uv{python_version >= '3.8'}==0.1.15
+              uv{python_version >= '3.8'}==0.1.16
+              uv{python_version >= '3.8'}==0.1.17
+              uv{python_version >= '3.8'}==0.1.18
+              uv{python_version >= '3.8'}==0.1.19
+              uv{python_version >= '3.8'}==0.1.20
+              uv{python_version >= '3.8'}==0.1.21
+              uv{python_version >= '3.8'}==0.1.22
+              uv{python_version >= '3.8'}==0.1.23
+              uv{python_version >= '3.8'}==0.1.24
+          and the requested Python version (>=3.7) does not satisfy Python>=3.8, we can conclude that all versions of uv{python_version >= '3.8'} are incompatible.
+          And because you require uv{python_version >= '3.8'}, we can conclude that the requirements are unsatisfiable.
+    "###
+    );
+
+    Ok(())
+}
+
+/// This test captures a case[1] that was broken by Requires-Python version
+/// narrowing[2] in the universal resolver, and was later fixed by [3].
+///
+/// [1]: https://github.com/astral-sh/uv/issues/4885
+/// [2]: https://github.com/astral-sh/uv/pull/4707
+/// [3]: https://github.com/astral-sh/uv/pull/5597
+#[test]
+fn universal_no_repeated_unconditional_distributions() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc::indoc! {r"
+        pylint
+        sphinx
+    "})?;
+
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .arg("requirements.in")
+            .arg("-p")
+            .arg("3.8")
+            .arg("--universal"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in -p 3.8 --universal
+    alabaster==0.7.13
+        # via sphinx
+    astroid==3.1.0
+        # via pylint
+    babel==2.14.0
+        # via sphinx
+    certifi==2024.2.2
+        # via requests
+    charset-normalizer==3.3.2
+        # via requests
+    colorama==0.4.6 ; sys_platform == 'win32'
+        # via
+        #   pylint
+        #   sphinx
+    dill==0.3.8
+        # via pylint
+    docutils==0.20.1
+        # via sphinx
+    idna==3.6
+        # via requests
+    imagesize==1.4.1
+        # via sphinx
+    importlib-metadata==7.1.0 ; python_version < '3.10'
+        # via sphinx
+    isort==5.13.2
+        # via pylint
+    jinja2==3.1.3
+        # via sphinx
+    markupsafe==2.1.5
+        # via jinja2
+    mccabe==0.7.0
+        # via pylint
+    packaging==24.0
+        # via sphinx
+    platformdirs==4.2.0
+        # via pylint
+    pygments==2.17.2
+        # via sphinx
+    pylint==3.1.0
+        # via -r requirements.in
+    pytz==2024.1 ; python_version < '3.9'
+        # via babel
+    requests==2.31.0
+        # via sphinx
+    snowballstemmer==2.2.0
+        # via sphinx
+    sphinx==7.1.2
+        # via -r requirements.in
+    sphinxcontrib-applehelp==1.0.4
+        # via sphinx
+    sphinxcontrib-devhelp==1.0.2
+        # via sphinx
+    sphinxcontrib-htmlhelp==2.0.1
+        # via sphinx
+    sphinxcontrib-jsmath==1.0.1
+        # via sphinx
+    sphinxcontrib-qthelp==1.0.3
+        # via sphinx
+    sphinxcontrib-serializinghtml==1.1.5
+        # via sphinx
+    tomli==2.0.1 ; python_version < '3.11'
+        # via pylint
+    tomlkit==0.12.4
+        # via pylint
+    typing-extensions==4.10.0 ; python_version < '3.11'
+        # via
+        #   astroid
+        #   pylint
+    urllib3==2.2.1
+        # via requests
+    zipp==3.18.1 ; python_version < '3.10'
+        # via importlib-metadata
+
+    ----- stderr -----
+    warning: The requested Python version 3.8 is not available; 3.12.[X] will be used to build dependencies instead.
+    Resolved 34 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// Solve for upper bounds before solving for lower bounds. A solution that satisfies `pylint < 3`
+/// can also work for `pylint > 2`, but the inverse isn't true (due to maximum version selection).
+#[test]
+fn universal_prefer_upper_bounds() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc::indoc! {r"
+        pylint < 3 ; sys_platform == 'darwin'
+        pylint > 2 ; sys_platform != 'darwin'
+    "})?;
+
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .arg("requirements.in")
+            .arg("-p")
+            .arg("3.8")
+            .arg("--universal"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in -p 3.8 --universal
+    astroid==2.15.8 ; (python_version < '3.11' and sys_platform == 'darwin') or (python_version < '3.11' and sys_platform != 'darwin') or (python_version >= '3.11' and sys_platform == 'darwin') or (python_version >= '3.11' and sys_platform != 'darwin')
+        # via pylint
+    colorama==0.4.6 ; sys_platform == 'win32'
+        # via pylint
+    dill==0.3.8
+        # via pylint
+    isort==5.13.2 ; (python_version < '3.11' and sys_platform == 'darwin') or (python_version < '3.11' and sys_platform != 'darwin') or (python_version >= '3.11' and sys_platform == 'darwin') or (python_version >= '3.11' and sys_platform != 'darwin')
+        # via pylint
+    lazy-object-proxy==1.10.0 ; (python_version < '3.11' and sys_platform == 'darwin') or (python_version < '3.11' and sys_platform != 'darwin') or (python_version >= '3.11' and sys_platform == 'darwin') or (python_version >= '3.11' and sys_platform != 'darwin')
+        # via astroid
+    mccabe==0.7.0 ; (python_version < '3.11' and sys_platform == 'darwin') or (python_version < '3.11' and sys_platform != 'darwin') or (python_version >= '3.11' and sys_platform == 'darwin') or (python_version >= '3.11' and sys_platform != 'darwin')
+        # via pylint
+    platformdirs==4.2.0 ; (python_version < '3.11' and sys_platform == 'darwin') or (python_version < '3.11' and sys_platform != 'darwin') or (python_version >= '3.11' and sys_platform == 'darwin') or (python_version >= '3.11' and sys_platform != 'darwin')
+        # via pylint
+    pylint==2.17.7
+        # via -r requirements.in
+    tomli==2.0.1 ; python_version < '3.11'
+        # via pylint
+    tomlkit==0.12.4 ; (python_version < '3.11' and sys_platform == 'darwin') or (python_version < '3.11' and sys_platform != 'darwin') or (python_version >= '3.11' and sys_platform == 'darwin') or (python_version >= '3.11' and sys_platform != 'darwin')
+        # via pylint
+    typing-extensions==4.10.0 ; python_version < '3.11'
+        # via
+        #   astroid
+        #   pylint
+    wrapt==1.16.0 ; (python_version < '3.11' and sys_platform == 'darwin') or (python_version < '3.11' and sys_platform != 'darwin') or (python_version >= '3.11' and sys_platform == 'darwin') or (python_version >= '3.11' and sys_platform != 'darwin')
+        # via astroid
+
+    ----- stderr -----
+    warning: The requested Python version 3.8 is not available; 3.12.[X] will be used to build dependencies instead.
+    Resolved 12 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// Remove `python_version` markers that are always true.
+#[test]
+fn universal_unnecessary_python() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc::indoc! {r"
+        iniconfig ; python_version >= '3.7'
+    "})?;
+
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .arg("requirements.in")
+            .arg("-p")
+            .arg("3.8")
+            .arg("--universal"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in -p 3.8 --universal
+    iniconfig==2.0.0
+        # via -r requirements.in
+
+    ----- stderr -----
+    warning: The requested Python version 3.8 is not available; 3.12.[X] will be used to build dependencies instead.
+    Resolved 1 package in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
+/// Tests the markers are propagated correctly.
+///
+/// The main issue here is that we depend on `torch` and `torchvision`
+/// directly, but our dependency on the specific `torch` version is conditional
+/// on the marker environment. This is usually fine, except in this case,
+/// `torchvision` has an unconditional dependency on `torch`, and this resulted
+/// in the markers being dropped. As a result, we'd previously write a
+/// `requirements.txt` file that unconditionally dependended on two different
+/// versions of `torch`.
+///
+/// See: <https://github.com/astral-sh/uv/issues/5086>
+#[test]
+fn universal_marker_propagation() -> Result<()> {
+    let context = TestContext::new("3.12");
+    let requirements_in = context.temp_dir.child("requirements.in");
+    requirements_in.write_str(indoc::indoc! {r"
+        --find-links https://download.pytorch.org/whl/torch_stable.html
+
+        torch==2.0.0 ; platform_machine == 'x86_64'
+        torch==2.2.0 ; platform_machine != 'x86_64'
+        torchvision
+    "})?;
+
+    uv_snapshot!(context.filters(), windows_filters=false, context.pip_compile()
+            .arg("requirements.in")
+            .arg("-p")
+            .arg("3.8")
+            .arg("--universal"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    # This file was autogenerated by uv via the following command:
+    #    uv pip compile --cache-dir [CACHE_DIR] requirements.in -p 3.8 --universal
+    certifi==2024.2.2
+        # via requests
+    charset-normalizer==3.3.2
+        # via requests
+    filelock==3.13.1
+        # via torch
+    fsspec==2024.3.1 ; platform_machine != 'x86_64'
+        # via torch
+    idna==3.6
+        # via requests
+    jinja2==3.1.3
+        # via torch
+    markupsafe==2.1.5
+        # via jinja2
+    mpmath==1.3.0
+        # via sympy
+    networkx==3.2.1
+        # via torch
+    numpy==1.26.3
+        # via torchvision
+    pillow==10.2.0
+        # via torchvision
+    requests==2.31.0
+        # via torchvision
+    sympy==1.12
+        # via torch
+    torch==2.0.0 ; platform_machine == 'x86_64'
+        # via
+        #   -r requirements.in
+        #   torchvision
+    torch==2.2.0 ; platform_machine != 'x86_64'
+        # via
+        #   -r requirements.in
+        #   torchvision
+    torchvision==0.15.1+rocm5.4.2 ; platform_machine == 'x86_64'
+        # via -r requirements.in
+    torchvision==0.17.0+rocm5.7 ; platform_machine != 'x86_64'
+        # via -r requirements.in
+    typing-extensions==4.10.0
+        # via torch
+    urllib3==2.2.1
+        # via requests
+
+    ----- stderr -----
+    warning: The requested Python version 3.8 is not available; 3.12.[X] will be used to build dependencies instead.
+    Resolved 19 packages in [TIME]
+    "###
+    );
+
+    Ok(())
+}
+
 /// Resolve a package from a `requirements.in` file, with a `constraints.txt` file pinning one of
 /// its transitive dependencies to a specific version.
 #[test]
@@ -6610,7 +8133,7 @@ fn compile_constraints_compatible_version() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("filelock==3.8.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt"), @r###"
@@ -6649,7 +8172,7 @@ fn compile_constraints_incompatible_version() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("filelock==3.8.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt"), @r###"
@@ -6677,7 +8200,7 @@ fn conflicting_url_markers() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("filelock==3.8.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt"), @r###"
@@ -6786,7 +8309,7 @@ fn override_with_compatible_constraint() -> Result<()> {
     let overrides_txt = context.temp_dir.child("overrides.txt");
     overrides_txt.write_str("anyio>=3.0.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt")
@@ -6829,7 +8352,7 @@ fn override_with_incompatible_constraint() -> Result<()> {
     let overrides_txt = context.temp_dir.child("overrides.txt");
     overrides_txt.write_str("anyio>=3.0.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt")
@@ -6855,7 +8378,7 @@ fn unsafe_package() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--unsafe-package")
             .arg("jinja2")
@@ -6900,7 +8423,7 @@ fn pre_release_upper_bound_exclude() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask<2.0.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--prerelease=allow"), @r###"
     success: true
@@ -6937,7 +8460,7 @@ fn pre_release_upper_bound_include() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask<2.0.0rc4")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--prerelease=allow"), @r###"
     success: true
@@ -6975,7 +8498,7 @@ fn pre_alias() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("flask<2.0.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--pre"), @r###"
     success: true
@@ -7014,7 +8537,7 @@ fn pre_release_constraint() -> Result<()> {
     let constraints_txt = context.temp_dir.child("constraints.txt");
     constraints_txt.write_str("flask<=2.0.0rc2")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--constraint")
             .arg("constraints.txt"), @r###"
@@ -7073,7 +8596,7 @@ dev = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .arg("--extra")
             .arg("dev"), @r###"
@@ -7123,7 +8646,7 @@ dev = [
 "#,
     )?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("pyproject.toml")
             .arg("--extra")
             .arg("dev"), @r###"
@@ -7185,7 +8708,7 @@ fn empty_index_url_env_var() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--emit-index-url")
             .env("UV_INDEX_URL", ""), @r###"
@@ -7218,7 +8741,7 @@ fn empty_extra_index_url_env_var() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--emit-index-url")
             .env("EXTRA_UV_INDEX_URL", ""), @r###"
@@ -7252,7 +8775,7 @@ fn empty_index_url_env_var_override() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("--index-url https://test.pypi.org/simple\nidna")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--emit-index-url")
             .env("UV_INDEX_URL", ""), @r###"
@@ -7281,7 +8804,7 @@ fn index_url_env_var_override() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("--index-url https://pypi.org/simple\nidna")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--emit-index-url")
             .env("UV_INDEX_URL", "https://test.pypi.org/simple"), @r###"
@@ -7420,7 +8943,7 @@ requires-python = "<=3.8"
 
     ----- stderr -----
       × No solution found when resolving dependencies:
-      ╰─▶ Because the requested Python version (3.11) does not satisfy Python<=3.8 and example==0.0.0 depends on Python<=3.8, we can conclude that example==0.0.0 cannot be used.
+      ╰─▶ Because the requested Python version (3.11.0) does not satisfy Python<=3.8 and example==0.0.0 depends on Python<=3.8, we can conclude that example==0.0.0 cannot be used.
           And because only example==0.0.0 is available and you require example, we can conclude that the requirements are unsatisfiable.
     "###
     );
@@ -7452,7 +8975,7 @@ dev = [
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("-e .[dev]")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -7501,7 +9024,7 @@ dev = ["setuptools"]
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("-e .")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--resolution=lowest-direct"), @r###"
     success: true
@@ -7533,7 +9056,7 @@ fn metadata_2_2() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("pyo3-mixed @ https://files.pythonhosted.org/packages/2b/b8/e04b783d3569d5b61b1dcdfda683ac2e3617340539aecd0f099fbade0b4a/pyo3_mixed-2.1.5.tar.gz")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -7601,7 +9124,7 @@ fn not_found_direct_url() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("iniconfig @ https://files.pythonhosted.org/packages/ef/a6/fake/iniconfig-2.0.0-py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in"), @r###"
     success: false
     exit_code: 2
@@ -7728,7 +9251,7 @@ fn requirement_wheel_name_mismatch() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("dateutil @ https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in"), @r###"
     success: false
     exit_code: 2
@@ -7762,7 +9285,7 @@ fn preserve_hashes_no_upgrade() -> Result<()> {
     "})?;
 
     // Avoid adding any additional hashes to the "lockfile".
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--output-file")
             .arg("requirements.txt")
@@ -7806,7 +9329,7 @@ fn preserve_hashes_upgrade() -> Result<()> {
     "})?;
 
     // Requesting an upgrade should update the hashes, even if the version didn't change.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--output-file")
             .arg("requirements.txt")
@@ -7895,7 +9418,7 @@ fn preserve_hashes_no_existing_hashes() -> Result<()> {
     "})?;
 
     // Add additional hashes to the "lockfile".
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--output-file")
             .arg("requirements.txt")
@@ -7986,7 +9509,7 @@ fn preserve_hashes_newer_version() -> Result<()> {
     "})?;
 
     // Requesting a more specific version should update the hashes.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
             .arg("requirements.in")
             .arg("--output-file")
             .arg("requirements.txt")
@@ -8141,7 +9664,7 @@ fn unnamed_git_requirement() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("git+https://github.com/pallets/flask.git@3.0.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -8180,7 +9703,7 @@ fn unnamed_https_requirement() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("https://github.com/pallets/flask/archive/refs/tags/3.0.2.tar.gz")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in"), @r###"
     success: true
     exit_code: 0
@@ -8469,7 +9992,7 @@ fn local_version_of_remote_package() -> Result<()> {
     Resolved 3 packages in [TIME]
     "###);
 
-    // Write a lock file with the local version
+    // Write a lockfile with the local version
     let requirements_txt = context.temp_dir.child("requirements.txt");
     requirements_txt.write_str(&indoc::formatdoc! {r"
             anyio @ {workspace_root}/scripts/packages/anyio_local
@@ -8479,7 +10002,7 @@ fn local_version_of_remote_package() -> Result<()> {
 
     // The local version is _still_ excluded from the resolution
     // `uv pip compile` does not have access to an environment and cannot consider installed packages
-    // We may want to allow the lock file to be preserved in this case in the future, but right now
+    // We may want to allow the lockfile to be preserved in this case in the future, but right now
     // we require the URL to always be in the input file.
     uv_snapshot!(context.filters(), context.pip_compile()
         .arg(requirements_in.canonicalize()?)
@@ -8813,7 +10336,7 @@ requires-python = ">3.8"
         # via -r requirements.in
     idna==3.6
         # via anyio
-    lib @ file://[TEMP_DIR]/lib/
+    lib @ file://[TEMP_DIR]/lib
         # via example
 
     ----- stderr -----
@@ -8943,7 +10466,7 @@ fn compile_index_url_first_match() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("jinja2==3.1.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("--index-url")
         .arg("https://pypi.org/simple")
         .arg("--extra-index-url")
@@ -8975,7 +10498,7 @@ fn compile_index_url_fallback() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("jinja2==3.1.0")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("--index-strategy")
         .arg("unsafe-any-match")
         .arg("--index-url")
@@ -9015,7 +10538,7 @@ fn compile_index_url_fallback_prefer_primary() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("--index-strategy")
         .arg("unsafe-any-match")
         .arg("--index-url")
@@ -9055,7 +10578,7 @@ fn compile_index_url_unsafe_highest() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("anyio")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("--index-strategy")
         .arg("unsafe-best-match")
         .arg("--index-url")
@@ -9088,14 +10611,17 @@ fn compile_index_url_unsafe_highest() -> Result<()> {
 /// In this case, anyio 3.5.0 is hosted on the "extra" index, but older versions are available on
 /// the "primary" index. We should prefer the older version from the "primary" index, despite the
 /// "extra" index being the preferred index.
+///
+/// We also test here that a warning is raised for missing lower bounds on direct dependencies with
+/// `--resolution lowest`.
 #[test]
 fn compile_index_url_unsafe_lowest() -> Result<()> {
     let context = TestContext::new("3.12");
 
     let requirements_in = context.temp_dir.child("requirements.in");
-    requirements_in.write_str("anyio")?;
+    requirements_in.write_str("anyio<100")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("--resolution")
         .arg("lowest")
         .arg("--index-strategy")
@@ -9115,6 +10641,7 @@ fn compile_index_url_unsafe_lowest() -> Result<()> {
         # via -r requirements.in
 
     ----- stderr -----
+    warning: The direct dependency `anyio` is unpinned. Consider setting a lower bound when using `--resolution-strategy lowest` to avoid using outdated versions.
     Resolved 1 package in [TIME]
     "###
     );
@@ -9131,7 +10658,7 @@ fn emit_index_annotation_hide_password() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("requests")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--emit-index-annotation")
         .env("UV_INDEX_URL", "https://test-user:test-password@pypi.org/simple"), @r###"
@@ -9172,7 +10699,7 @@ fn emit_index_annotation_pypi_org_simple() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("requests")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--emit-index-annotation"), @r###"
     success: true
@@ -9215,7 +10742,7 @@ fn emit_index_annotation_no_annotate() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("requests")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--emit-index-annotation")
         .arg("--no-annotate"), @r###"
@@ -9251,7 +10778,7 @@ fn emit_index_annotation_line() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("requests")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--emit-index-annotation")
         .arg("--annotation-style")
@@ -9288,7 +10815,7 @@ fn emit_index_annotation_multiple_indexes() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("uv\nrequests")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         .arg("--extra-index-url")
         .arg("https://test.pypi.org/simple")
@@ -9321,7 +10848,7 @@ fn no_version_for_direct_dependency() -> Result<()> {
     let requirements_in = context.temp_dir.child("requirements.in");
     requirements_in.write_str("pypyp==1,>=1.2")?;
 
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("requirements.in")
         // Must error before we make any network requests
         .arg("--offline"), @r###"
@@ -9806,7 +11333,7 @@ fn tool_uv_sources() -> Result<()> {
     )?;
 
     // Install the editable packages.
-    uv_snapshot!(context.pip_compile()
+    uv_snapshot!(context.filters(), context.pip_compile()
         .arg("--preview")
         .arg(require_path)
         .arg("--extra")
@@ -9859,7 +11386,7 @@ fn dynamic_pyproject_toml() -> Result<()> {
     let bird_feeder = context.temp_dir.child("bird_feeder/__init__.py");
     bird_feeder.write_str("__all__= []")?;
 
-    uv_snapshot!(context.pip_compile().arg("pyproject.toml"), @r###"
+    uv_snapshot!(context.filters(), context.pip_compile().arg("pyproject.toml"), @r###"
     success: true
     exit_code: 0
     ----- stdout -----

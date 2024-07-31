@@ -23,17 +23,16 @@ name = "install_wheel_rs"
 distribution-filename = { workspace = true }
 pep440_rs = { workspace = true }
 platform-tags = { workspace = true }
-uv-normalize = { workspace = true }
-uv-fs = { workspace = true }
 pypi-types = { workspace = true }
+uv-fs = { workspace = true }
+uv-normalize = { workspace = true }
+uv-warnings = { workspace = true }
 
 clap = { workspace = true, optional = true, features = ["derive"] }
 configparser = { workspace = true }
 csv = { workspace = true }
 data-encoding = { workspace = true }
 fs-err = { workspace = true }
-mailparse = { workspace = true }
-once_cell = { workspace = true }
 pathdiff = { workspace = true }
 platform-info = { workspace = true }
 reflink-copy = { workspace = true }

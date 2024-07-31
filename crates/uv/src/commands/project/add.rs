@@ -1,32 +1,36 @@
 use anyhow::{Context, Result};
 
 use pep508_rs::ExtraName;
+use uv_auth::store_credentials_from_url;
 use uv_cache::Cache;
 use uv_client::{BaseClientBuilder, Connectivity, FlatIndexClient, RegistryClientBuilder};
 use uv_configuration::{Concurrency, ExtrasSpecification, PreviewMode, SetupPyStrategy};
 use uv_dispatch::BuildDispatch;
-use uv_distribution::pyproject::{DependencyType, Source, SourceError};
-use uv_distribution::pyproject_mut::PyProjectTomlMut;
-use uv_distribution::{DistributionDatabase, ProjectWorkspace, VirtualProject, Workspace};
-use uv_git::GitResolver;
+use uv_distribution::DistributionDatabase;
+use uv_fs::CWD;
 use uv_normalize::PackageName;
+use uv_python::{PythonFetch, PythonPreference, PythonRequest};
 use uv_requirements::{NamedRequirementsResolver, RequirementsSource, RequirementsSpecification};
-use uv_resolver::{FlatIndex, InMemoryIndex};
-use uv_toolchain::{ToolchainFetch, ToolchainPreference, ToolchainRequest};
-use uv_types::{BuildIsolation, HashStrategy, InFlight};
+use uv_resolver::FlatIndex;
+use uv_types::{BuildIsolation, HashStrategy};
 use uv_warnings::warn_user_once;
+use uv_workspace::pyproject::{DependencyType, Source, SourceError};
+use uv_workspace::pyproject_mut::PyProjectTomlMut;
+use uv_workspace::{DiscoveryOptions, ProjectWorkspace, VirtualProject, Workspace};
 
 use crate::commands::pip::operations::Modifications;
 use crate::commands::pip::resolution_environment;
-use crate::commands::project::SharedState;
+use crate::commands::project::ProjectError;
 use crate::commands::reporters::ResolverReporter;
-use crate::commands::{project, ExitStatus};
+use crate::commands::{pip, project, ExitStatus, SharedState};
 use crate::printer::Printer;
 use crate::settings::ResolverInstallerSettings;
 
 /// Add one or more packages to the project requirements.
-#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+#[allow(clippy::fn_params_excessive_bools)]
 pub(crate) async fn add(
+    locked: bool,
+    frozen: bool,
     requirements: Vec<RequirementsSource>,
     editable: Option<bool>,
     dependency_type: DependencyType,
@@ -38,8 +42,8 @@ pub(crate) async fn add(
     package: Option<PackageName>,
     python: Option<String>,
     settings: ResolverInstallerSettings,
-    toolchain_preference: ToolchainPreference,
-    toolchain_fetch: ToolchainFetch,
+    python_preference: PythonPreference,
+    python_fetch: PythonFetch,
     preview: PreviewMode,
     connectivity: Connectivity,
     concurrency: Concurrency,
@@ -48,25 +52,25 @@ pub(crate) async fn add(
     printer: Printer,
 ) -> Result<ExitStatus> {
     if preview.is_disabled() {
-        warn_user_once!("`uv add` is experimental and may change without warning.");
+        warn_user_once!("`uv add` is experimental and may change without warning");
     }
 
     // Find the project in the workspace.
     let project = if let Some(package) = package {
-        Workspace::discover(&std::env::current_dir()?, None)
+        Workspace::discover(&CWD, &DiscoveryOptions::default())
             .await?
             .with_current_project(package.clone())
             .with_context(|| format!("Package `{package}` not found in workspace"))?
     } else {
-        ProjectWorkspace::discover(&std::env::current_dir()?, None).await?
+        ProjectWorkspace::discover(&CWD, &DiscoveryOptions::default()).await?
     };
 
     // Discover or create the virtual environment.
     let venv = project::get_or_init_environment(
         project.workspace(),
-        python.as_deref().map(ToolchainRequest::parse),
-        toolchain_preference,
-        toolchain_fetch,
+        python.as_deref().map(PythonRequest::parse),
+        python_preference,
+        python_fetch,
         connectivity,
         native_tls,
         cache,
@@ -95,21 +99,21 @@ pub(crate) async fn add(
     let (tags, markers) =
         resolution_environment(python_version, python_platform, venv.interpreter())?;
 
+    // Add all authenticated sources to the cache.
+    for url in settings.index_locations.urls() {
+        store_credentials_from_url(url);
+    }
+
     // Initialize the registry client.
-    let client = RegistryClientBuilder::new(cache.clone())
-        .native_tls(native_tls)
-        .connectivity(connectivity)
+    let client = RegistryClientBuilder::from(client_builder)
         .index_urls(settings.index_locations.index_urls())
         .index_strategy(settings.index_strategy)
-        .keyring(settings.keyring_provider)
         .markers(&markers)
         .platform(venv.interpreter().platform())
         .build();
 
     // Initialize any shared state.
-    let git = GitResolver::default();
-    let in_flight = InFlight::default();
-    let index = InMemoryIndex::default();
+    let state = SharedState::default();
 
     // Resolve the flat indexes from `--find-links`.
     let flat_index = {
@@ -125,9 +129,9 @@ pub(crate) async fn add(
         venv.interpreter(),
         &settings.index_locations,
         &flat_index,
-        &index,
-        &git,
-        &in_flight,
+        &state.index,
+        &state.git,
+        &state.in_flight,
         settings.index_strategy,
         setup_py,
         &settings.config_setting,
@@ -143,7 +147,7 @@ pub(crate) async fn add(
     let requirements = NamedRequirementsResolver::new(
         requirements,
         &hasher,
-        &index,
+        &state.index,
         DistributionDatabase::new(&client, &build_dispatch, concurrency.downloads, preview),
     )
     .with_reporter(ResolverReporter::from(printer))
@@ -151,7 +155,8 @@ pub(crate) async fn add(
     .await?;
 
     // Add the requirements to the `pyproject.toml`.
-    let mut pyproject = PyProjectTomlMut::from_toml(project.current_project().pyproject_toml())?;
+    let existing = project.current_project().pyproject_toml();
+    let mut pyproject = PyProjectTomlMut::from_toml(existing)?;
     for mut req in requirements {
         // Add the specified extras.
         req.extras.extend(extras.iter().cloned());
@@ -208,11 +213,19 @@ pub(crate) async fn add(
         pyproject.to_string(),
     )?;
 
+    // If `--frozen`, exit early. There's no reason to lock and sync, and we don't need a `uv.lock`
+    // to exist at all.
+    if frozen {
+        return Ok(ExitStatus::Success);
+    }
+
     // Initialize any shared state.
     let state = SharedState::default();
 
-    // Lock and sync the environment.
-    let lock = project::lock::do_lock(
+    // Lock and sync the environment, if necessary.
+    let lock = match project::lock::do_safe_lock(
+        locked,
+        frozen,
         project.workspace(),
         venv.interpreter(),
         settings.as_ref().into(),
@@ -224,7 +237,26 @@ pub(crate) async fn add(
         cache,
         printer,
     )
-    .await?;
+    .await
+    {
+        Ok(lock) => lock,
+        Err(ProjectError::Operation(pip::operations::Error::Resolve(
+            uv_resolver::ResolveError::NoSolution(err),
+        ))) => {
+            let header = err.header();
+            let report = miette::Report::new(WithHelp { header, cause: err, help: Some("If this is intentional, run `uv add --frozen` to skip the lock and sync steps.") });
+            anstream::eprint!("{report:?}");
+
+            // Revert the changes to the `pyproject.toml`.
+            fs_err::write(
+                project.current_project().root().join("pyproject.toml"),
+                existing,
+            )?;
+
+            return Ok(ExitStatus::Failure);
+        }
+        Err(err) => return Err(err.into()),
+    };
 
     // Perform a full sync, because we don't know what exactly is affected by the removal.
     // TODO(ibraheem): Should we accept CLI overrides for this? Should we even sync here?
@@ -234,8 +266,8 @@ pub(crate) async fn add(
     project::sync::do_sync(
         &VirtualProject::Project(project),
         &venv,
-        &lock,
-        extras,
+        &lock.lock,
+        &extras,
         dev,
         Modifications::Sufficient,
         settings.as_ref().into(),
@@ -250,4 +282,21 @@ pub(crate) async fn add(
     .await?;
 
     Ok(ExitStatus::Success)
+}
+
+/// Render a [`uv_resolver::NoSolutionError`] with a help message.
+#[derive(Debug, miette::Diagnostic, thiserror::Error)]
+#[error("{header}")]
+#[diagnostic()]
+struct WithHelp {
+    /// The header to render in the error message.
+    header: String,
+
+    /// The underlying error.
+    #[source]
+    cause: uv_resolver::NoSolutionError,
+
+    /// The help message to display.
+    #[help]
+    help: Option<&'static str>,
 }

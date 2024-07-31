@@ -1,20 +1,21 @@
-use once_cell::sync::Lazy;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use uv_configuration::PreviewMode;
 use uv_normalize::{ExtraName, GroupName, PackageName};
+use uv_workspace::{DiscoveryOptions, ProjectWorkspace};
 
 use crate::metadata::lowering::lower_requirement;
 use crate::metadata::MetadataError;
-use crate::{Metadata, ProjectWorkspace};
+use crate::Metadata;
 
 /// The name of the global `dev-dependencies` group.
 ///
 /// Internally, we model dependency groups as a generic concept; but externally, we only expose the
 /// `dev-dependencies` group.
-pub static DEV_DEPENDENCIES: Lazy<GroupName> =
-    Lazy::new(|| GroupName::new("dev".to_string()).unwrap());
+pub static DEV_DEPENDENCIES: LazyLock<GroupName> =
+    LazyLock::new(|| GroupName::new("dev".to_string()).unwrap());
 
 #[derive(Debug, Clone)]
 pub struct RequiresDist {
@@ -42,15 +43,20 @@ impl RequiresDist {
 
     /// Lower by considering `tool.uv` in `pyproject.toml` if present, used for Git and directory
     /// dependencies.
-    pub async fn from_workspace(
+    pub async fn from_project_maybe_workspace(
         metadata: pypi_types::RequiresDist,
-        project_root: &Path,
+        install_path: &Path,
+        lock_path: &Path,
         preview_mode: PreviewMode,
     ) -> Result<Self, MetadataError> {
         // TODO(konsti): Limit discovery for Git checkouts to Git root.
         // TODO(konsti): Cache workspace discovery.
-        let Some(project_workspace) =
-            ProjectWorkspace::from_maybe_project_root(project_root, None).await?
+        let Some(project_workspace) = ProjectWorkspace::from_maybe_project_root(
+            install_path,
+            lock_path,
+            &DiscoveryOptions::default(),
+        )
+        .await?
         else {
             return Ok(Self::from_metadata23(metadata));
         };
@@ -58,7 +64,7 @@ impl RequiresDist {
         Self::from_project_workspace(metadata, &project_workspace, preview_mode)
     }
 
-    pub fn from_project_workspace(
+    fn from_project_workspace(
         metadata: pypi_types::RequiresDist,
         project_workspace: &ProjectWorkspace,
         preview_mode: PreviewMode,
@@ -151,21 +157,26 @@ mod test {
     use insta::assert_snapshot;
 
     use uv_configuration::PreviewMode;
+    use uv_workspace::pyproject::PyProjectToml;
+    use uv_workspace::{DiscoveryOptions, ProjectWorkspace};
 
-    use crate::pyproject::PyProjectToml;
-    use crate::{ProjectWorkspace, RequiresDist};
+    use crate::RequiresDist;
 
     async fn requires_dist_from_pyproject_toml(contents: &str) -> anyhow::Result<RequiresDist> {
         let pyproject_toml = PyProjectToml::from_string(contents.to_string())?;
         let path = Path::new("pyproject.toml");
         let project_workspace = ProjectWorkspace::from_project(
             path,
+            path,
             pyproject_toml
                 .project
                 .as_ref()
                 .context("metadata field project not found")?,
             &pyproject_toml,
-            Some(path),
+            &DiscoveryOptions {
+                stop_discovery_at: Some(path),
+                ..DiscoveryOptions::default()
+            },
         )
         .await?;
         let requires_dist = pypi_types::RequiresDist::parse_pyproject_toml(contents)?;

@@ -160,9 +160,7 @@ impl<'a, Context: BuildContext> DistributionDatabase<'a, Context> {
                     FileLocation::RelativeUrl(base, url) => {
                         pypi_types::base_url_join_relative(base, url)?
                     }
-                    FileLocation::AbsoluteUrl(url) => {
-                        Url::parse(url).map_err(|err| Error::Url(url.clone(), err))?
-                    }
+                    FileLocation::AbsoluteUrl(url) => url.to_url(),
                     FileLocation::Path(path) => {
                         let cache_entry = self.build_context.cache().entry(
                             CacheBucket::Wheels,
@@ -210,10 +208,41 @@ impl<'a, Context: BuildContext> DistributionDatabase<'a, Context> {
                         hashes: archive.hashes,
                         filename: wheel.filename.clone(),
                     }),
-                    Err(Error::Extract(err)) if err.is_http_streaming_unsupported() => {
+                    Err(Error::Client(err)) if err.is_http_streaming_unsupported() => {
                         warn!(
                             "Streaming unsupported for {dist}; downloading wheel to disk ({err})"
                         );
+
+                        // If the request failed because streaming is unsupported, download the
+                        // wheel directly.
+                        let archive = self
+                            .download_wheel(
+                                url,
+                                &wheel.filename,
+                                wheel.file.size,
+                                &wheel_entry,
+                                dist,
+                                hashes,
+                            )
+                            .await?;
+
+                        Ok(LocalWheel {
+                            dist: Dist::Built(dist.clone()),
+                            archive: self.build_context.cache().archive(&archive.id),
+                            hashes: archive.hashes,
+                            filename: wheel.filename.clone(),
+                        })
+                    }
+                    Err(Error::Extract(err)) => {
+                        if err.is_http_streaming_unsupported() {
+                            warn!(
+                                "Streaming unsupported for {dist}; downloading wheel to disk ({err})"
+                            );
+                        } else if err.is_http_streaming_failed() {
+                            warn!("Streaming failed for {dist}; downloading wheel to disk ({err})");
+                        } else {
+                            return Err(Error::Extract(err));
+                        }
 
                         // If the request failed because streaming is unsupported, download the
                         // wheel directly.
@@ -269,6 +298,36 @@ impl<'a, Context: BuildContext> DistributionDatabase<'a, Context> {
                         warn!(
                             "Streaming unsupported for {dist}; downloading wheel to disk ({err})"
                         );
+
+                        // If the request failed because streaming is unsupported, download the
+                        // wheel directly.
+                        let archive = self
+                            .download_wheel(
+                                wheel.url.raw().clone(),
+                                &wheel.filename,
+                                None,
+                                &wheel_entry,
+                                dist,
+                                hashes,
+                            )
+                            .await?;
+                        Ok(LocalWheel {
+                            dist: Dist::Built(dist.clone()),
+                            archive: self.build_context.cache().archive(&archive.id),
+                            hashes: archive.hashes,
+                            filename: wheel.filename.clone(),
+                        })
+                    }
+                    Err(Error::Extract(err)) => {
+                        if err.is_http_streaming_unsupported() {
+                            warn!(
+                                "Streaming unsupported for {dist}; downloading wheel to disk ({err})"
+                            );
+                        } else if err.is_http_streaming_failed() {
+                            warn!("Streaming failed for {dist}; downloading wheel to disk ({err})");
+                        } else {
+                            return Err(Error::Extract(err));
+                        }
 
                         // If the request failed because streaming is unsupported, download the
                         // wheel directly.
@@ -369,14 +428,16 @@ impl<'a, Context: BuildContext> DistributionDatabase<'a, Context> {
         // For hash _validation_, callers are expected to enforce the policy when retrieving the
         // wheel.
         // TODO(charlie): Request the hashes via a separate method, to reduce the coupling in this API.
-        if hashes.is_generate() && matches!(dist, BuiltDist::DirectUrl(_) | BuiltDist::Path(_)) {
-            let wheel = self.get_wheel(dist, hashes).await?;
-            let metadata = wheel.metadata()?;
-            let hashes = wheel.hashes;
-            return Ok(ArchiveMetadata {
-                metadata: Metadata::from_metadata23(metadata),
-                hashes,
-            });
+        if hashes.is_generate() {
+            if dist.file().map_or(true, |file| file.hashes.is_empty()) {
+                let wheel = self.get_wheel(dist, hashes).await?;
+                let metadata = wheel.metadata()?;
+                let hashes = wheel.hashes;
+                return Ok(ArchiveMetadata {
+                    metadata: Metadata::from_metadata23(metadata),
+                    hashes,
+                });
+            }
         }
 
         let result = self
@@ -386,11 +447,11 @@ impl<'a, Context: BuildContext> DistributionDatabase<'a, Context> {
 
         match result {
             Ok(metadata) => Ok(ArchiveMetadata::from_metadata23(metadata)),
-            Err(err) if err.is_http_streaming_unsupported() => {
-                warn!("Streaming unsupported when fetching metadata for {dist}; downloading wheel directly ({err})");
+            Err(err) if err.is_http_range_requests_unsupported() => {
+                warn!("Range requests unsupported when fetching metadata for {dist}; downloading wheel directly ({err})");
 
-                // If the request failed due to an error that could be resolved by
-                // downloading the wheel directly, try that.
+                // If the request failed due to an error that could be resolved by downloading the
+                // wheel directly, try that.
                 let wheel = self.get_wheel(dist, hashes).await?;
                 let metadata = wheel.metadata()?;
                 let hashes = wheel.hashes;

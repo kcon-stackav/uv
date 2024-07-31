@@ -23,17 +23,17 @@ use uv_dispatch::BuildDispatch;
 use uv_fs::Simplified;
 use uv_git::GitResolver;
 use uv_normalize::PackageName;
+use uv_python::{
+    EnvironmentPreference, PythonEnvironment, PythonInstallation, PythonPreference, PythonRequest,
+    PythonVersion, VersionRequest,
+};
 use uv_requirements::{
     upgrade::read_requirements_txt, RequirementsSource, RequirementsSpecification,
 };
 use uv_resolver::{
     AnnotationStyle, DependencyMode, DisplayResolutionGraph, ExcludeNewer, FlatIndex,
     InMemoryIndex, OptionsBuilder, PreReleaseMode, PythonRequirement, RequiresPython,
-    ResolutionMode,
-};
-use uv_toolchain::{
-    EnvironmentPreference, PythonEnvironment, PythonVersion, Toolchain, ToolchainPreference,
-    ToolchainRequest, VersionRequest,
+    ResolutionMode, ResolverMarkers,
 };
 use uv_types::{BuildIsolation, EmptyInstalledPackages, HashStrategy, InFlight};
 use uv_warnings::warn_user;
@@ -43,11 +43,12 @@ use crate::commands::ExitStatus;
 use crate::printer::Printer;
 
 /// Resolve a set of requirements into a set of pinned versions.
-#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+#[allow(clippy::fn_params_excessive_bools)]
 pub(crate) async fn pip_compile(
     requirements: &[RequirementsSource],
     constraints: &[RequirementsSource],
     overrides: &[RequirementsSource],
+    constraints_from_workspace: Vec<Requirement>,
     overrides_from_workspace: Vec<Requirement>,
     extras: ExtrasSpecification,
     output_file: Option<&Path>,
@@ -83,7 +84,7 @@ pub(crate) async fn pip_compile(
     link_mode: LinkMode,
     python: Option<String>,
     system: bool,
-    toolchain_preference: ToolchainPreference,
+    python_preference: PythonPreference,
     concurrency: Concurrency,
     native_tls: bool,
     quiet: bool,
@@ -126,6 +127,12 @@ pub(crate) async fn pip_compile(
     )
     .await?;
 
+    let constraints = constraints
+        .iter()
+        .cloned()
+        .chain(constraints_from_workspace.into_iter())
+        .collect();
+
     let overrides: Vec<UnresolvedRequirementSpecification> = overrides
         .iter()
         .cloned()
@@ -159,18 +166,18 @@ pub(crate) async fn pip_compile(
     // Find an interpreter to use for building distributions
     let environments = EnvironmentPreference::from_system_flag(system, false);
     let interpreter = if let Some(python) = python.as_ref() {
-        let request = ToolchainRequest::parse(python);
-        Toolchain::find(&request, environments, toolchain_preference, &cache)
+        let request = PythonRequest::parse(python);
+        PythonInstallation::find(&request, environments, python_preference, &cache)
     } else {
         // TODO(zanieb): The split here hints at a problem with the abstraction; we should be able to use
-        // `Toolchain::find(...)` here.
+        // `PythonInstallation::find(...)` here.
         let request = if let Some(version) = python_version.as_ref() {
             // TODO(zanieb): We should consolidate `VersionRequest` and `PythonVersion`
-            ToolchainRequest::Version(VersionRequest::from(version))
+            PythonRequest::Version(VersionRequest::from(version))
         } else {
-            ToolchainRequest::default()
+            PythonRequest::default()
         };
-        Toolchain::find_best(&request, environments, toolchain_preference, &cache)
+        PythonInstallation::find_best(&request, environments, python_preference, &cache)
     }?
     .into_interpreter();
 
@@ -216,9 +223,9 @@ pub(crate) async fn pip_compile(
     let python_requirement = if universal {
         let requires_python = RequiresPython::greater_than_equal_version(
             if let Some(python_version) = python_version.as_ref() {
-                python_version.version.clone()
+                &python_version.version
             } else {
-                interpreter.python_version().clone()
+                interpreter.python_version()
             },
         );
         PythonRequirement::from_requires_python(&interpreter, &requires_python)
@@ -230,11 +237,14 @@ pub(crate) async fn pip_compile(
 
     // Determine the environment for the resolution.
     let (tags, markers) = if universal {
-        (None, None)
+        (None, ResolverMarkers::universal(None))
     } else {
         let (tags, markers) =
             resolution_environment(python_version, python_platform, &interpreter)?;
-        (Some(tags), Some(markers))
+        (
+            Some(tags),
+            ResolverMarkers::SpecificEnvironment((*markers).clone()),
+        )
     };
 
     // Generate, but don't enforce hashes for the requirements.
@@ -257,12 +267,10 @@ pub(crate) async fn pip_compile(
     }
 
     // Initialize the registry client.
-    let client = RegistryClientBuilder::new(cache.clone())
-        .native_tls(native_tls)
-        .connectivity(connectivity)
+    let client = RegistryClientBuilder::from(client_builder)
+        .cache(cache.clone())
         .index_urls(index_locations.index_urls())
         .index_strategy(index_strategy)
-        .keyring(keyring_provider)
         .markers(interpreter.markers())
         .platform(interpreter.platform())
         .build();
@@ -336,7 +344,7 @@ pub(crate) async fn pip_compile(
         &Reinstall::None,
         &upgrade,
         tags.as_deref(),
-        markers.as_deref(),
+        markers.clone(),
         python_requirement,
         &client,
         &flat_index,
@@ -346,13 +354,13 @@ pub(crate) async fn pip_compile(
         options,
         printer,
         preview,
+        false,
     )
     .await
     {
         Ok(resolution) => resolution,
         Err(operations::Error::Resolve(uv_resolver::ResolveError::NoSolution(err))) => {
-            let report = miette::Report::msg(format!("{err}"))
-                .context("No solution found when resolving dependencies:");
+            let report = miette::Report::msg(format!("{err}")).context(err.header());
             eprint!("{report:?}");
             return Ok(ExitStatus::Failure);
         }
@@ -384,7 +392,7 @@ pub(crate) async fn pip_compile(
     }
 
     if include_marker_expression {
-        if let Some(markers) = markers.as_deref() {
+        if let ResolverMarkers::SpecificEnvironment(markers) = &markers {
             let relevant_markers = resolution.marker_tree(&top_level_index, markers)?;
             writeln!(
                 writer,
@@ -412,7 +420,7 @@ pub(crate) async fn pip_compile(
     // If necessary, include the `--find-links` locations.
     if include_find_links {
         for flat_index in index_locations.flat_index() {
-            writeln!(writer, "--find-links {flat_index}")?;
+            writeln!(writer, "--find-links {}", flat_index.verbatim())?;
             wrote_preamble = true;
         }
     }
@@ -457,7 +465,7 @@ pub(crate) async fn pip_compile(
         "{}",
         DisplayResolutionGraph::new(
             &resolution,
-            markers.as_deref(),
+            &markers,
             &no_emit_packages,
             generate_hashes,
             include_extras,
@@ -491,7 +499,7 @@ pub(crate) async fn pip_compile(
     Ok(ExitStatus::Success)
 }
 
-/// Format the `uv` command used to generate the output file.
+/// Format the uv command used to generate the output file.
 #[allow(clippy::fn_params_excessive_bools)]
 fn cmd(
     include_index_url: bool,
@@ -528,21 +536,35 @@ fn cmd(
 
             // Skip any `--find-links` URLs, unless requested.
             if !include_find_links {
-                if arg.starts_with("--find-links=") || arg.starts_with("-f=") {
-                    // Reset state; skip this iteration.
-                    *skip_next = None;
+                // Always skip the `--find-links` and mark the next item to be skipped
+                if arg == "--find-links" || arg == "-f" {
+                    *skip_next = Some(true);
                     return Some(None);
                 }
 
-                // Mark the next item as (to be) skipped.
-                if arg == "--find-links" || arg == "-f" {
-                    *skip_next = Some(true);
+                // Skip only this argument if option and value are together
+                if arg.starts_with("--find-links=") || arg.starts_with("-f") {
+                    // Reset state; skip this iteration.
+                    *skip_next = None;
                     return Some(None);
                 }
             }
 
             // Always skip the `--upgrade` flag.
             if arg == "--upgrade" || arg == "-U" {
+                *skip_next = None;
+                return Some(None);
+            }
+
+            // Always skip the `--upgrade-package` and mark the next item to be skipped
+            if arg == "--upgrade-package" || arg == "-P" {
+                *skip_next = Some(true);
+                return Some(None);
+            }
+
+            // Skip only this argument if option and value are together
+            if arg.starts_with("--upgrade-package=") || arg.starts_with("-P") {
+                // Reset state; skip this iteration.
                 *skip_next = None;
                 return Some(None);
             }

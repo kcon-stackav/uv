@@ -6,10 +6,7 @@ use std::ops::Bound;
 use derivative::Derivative;
 use indexmap::IndexSet;
 use owo_colors::OwoColorize;
-use pubgrub::range::Range;
-use pubgrub::report::{DerivationTree, Derived, External, ReportFormatter};
-use pubgrub::term::Term;
-use pubgrub::type_aliases::Map;
+use pubgrub::{DerivationTree, Derived, External, Map, Range, ReportFormatter, Term};
 use rustc_hash::FxHashMap;
 
 use distribution_types::IndexLocations;
@@ -18,9 +15,10 @@ use uv_normalize::PackageName;
 
 use crate::candidate_selector::CandidateSelector;
 use crate::fork_urls::ForkUrls;
+use crate::prerelease_mode::AllowPreRelease;
 use crate::python_requirement::{PythonRequirement, PythonTarget};
 use crate::resolver::{IncompletePackage, UnavailablePackage, UnavailableReason};
-use crate::RequiresPython;
+use crate::{RequiresPython, ResolverMarkers};
 
 use super::{PubGrubPackage, PubGrubPackageInner, PubGrubPython};
 
@@ -30,7 +28,7 @@ pub(crate) struct PubGrubReportFormatter<'a> {
     pub(crate) available_versions: &'a FxHashMap<PubGrubPackage, BTreeSet<Version>>,
 
     /// The versions that were available for each package
-    pub(crate) python_requirement: Option<&'a PythonRequirement>,
+    pub(crate) python_requirement: &'a PythonRequirement,
 }
 
 impl ReportFormatter<PubGrubPackage, Range<Version>, UnavailableReason>
@@ -47,33 +45,31 @@ impl ReportFormatter<PubGrubPackage, Range<Version>, UnavailableReason>
                 format!("we are solving dependencies of {package} {version}")
             }
             External::NoVersions(package, set) => {
-                if let Some(python) = self.python_requirement {
-                    if matches!(
-                        &**package,
-                        PubGrubPackageInner::Python(PubGrubPython::Target)
-                    ) {
-                        return if let Some(target) = python.target() {
-                            format!(
-                                "the requested {package} version ({target}) does not satisfy {}",
-                                PackageRange::compatibility(package, set)
-                            )
-                        } else {
-                            format!(
-                                "the requested {package} version does not satisfy {}",
-                                PackageRange::compatibility(package, set)
-                            )
-                        };
-                    }
-                    if matches!(
-                        &**package,
-                        PubGrubPackageInner::Python(PubGrubPython::Installed)
-                    ) {
-                        return format!(
-                            "the current {package} version ({}) does not satisfy {}",
-                            python.installed(),
+                if matches!(
+                    &**package,
+                    PubGrubPackageInner::Python(PubGrubPython::Target)
+                ) {
+                    return if let Some(target) = self.python_requirement.target() {
+                        format!(
+                            "the requested {package} version ({target}) does not satisfy {}",
                             PackageRange::compatibility(package, set)
-                        );
-                    }
+                        )
+                    } else {
+                        format!(
+                            "the requested {package} version does not satisfy {}",
+                            PackageRange::compatibility(package, set)
+                        )
+                    };
+                }
+                if matches!(
+                    &**package,
+                    PubGrubPackageInner::Python(PubGrubPython::Installed)
+                ) {
+                    return format!(
+                        "the current {package} version ({}) does not satisfy {}",
+                        self.python_requirement.installed(),
+                        PackageRange::compatibility(package, set)
+                    );
                 }
 
                 let set = self.simplify_set(set, package);
@@ -404,11 +400,12 @@ impl PubGrubReportFormatter<'_> {
     pub(crate) fn hints(
         &self,
         derivation_tree: &DerivationTree<PubGrubPackage, Range<Version>, UnavailableReason>,
-        selector: &Option<CandidateSelector>,
-        index_locations: &Option<IndexLocations>,
+        selector: &CandidateSelector,
+        index_locations: &IndexLocations,
         unavailable_packages: &FxHashMap<PackageName, UnavailablePackage>,
         incomplete_packages: &FxHashMap<PackageName, BTreeMap<Version, IncompletePackage>>,
         fork_urls: &ForkUrls,
+        markers: &ResolverMarkers,
     ) -> IndexSet<PubGrubHint> {
         let mut hints = IndexSet::default();
         match derivation_tree {
@@ -417,28 +414,24 @@ impl PubGrubReportFormatter<'_> {
             ) => {
                 if let PubGrubPackageInner::Package { name, .. } = &**package {
                     // Check for no versions due to pre-release options.
-                    if let Some(selector) = selector {
-                        if !fork_urls.contains_key(name) {
-                            self.prerelease_available_hint(
-                                package, name, set, selector, &mut hints,
-                            );
-                        }
+                    if !fork_urls.contains_key(name) {
+                        self.prerelease_available_hint(
+                            package, name, set, selector, markers, &mut hints,
+                        );
                     }
                 }
 
                 if let PubGrubPackageInner::Package { name, .. } = &**package {
                     // Check for no versions due to no `--find-links` flat index
-                    if let Some(index_locations) = index_locations {
-                        Self::index_hints(
-                            package,
-                            name,
-                            set,
-                            index_locations,
-                            unavailable_packages,
-                            incomplete_packages,
-                            &mut hints,
-                        );
-                    }
+                    Self::index_hints(
+                        package,
+                        name,
+                        set,
+                        index_locations,
+                        unavailable_packages,
+                        incomplete_packages,
+                        &mut hints,
+                    );
                 }
             }
             DerivationTree::External(External::FromDependencyOf(
@@ -452,16 +445,15 @@ impl PubGrubReportFormatter<'_> {
                     &**dependency,
                     PubGrubPackageInner::Python(PubGrubPython::Target)
                 ) {
-                    if let Some(python) = self.python_requirement {
-                        if let Some(PythonTarget::RequiresPython(requires_python)) = python.target()
-                        {
-                            hints.insert(PubGrubHint::RequiresPython {
-                                requires_python: requires_python.clone(),
-                                package: package.clone(),
-                                package_set: self.simplify_set(package_set, package).into_owned(),
-                                package_requires_python: dependency_set.clone(),
-                            });
-                        }
+                    if let Some(PythonTarget::RequiresPython(requires_python)) =
+                        self.python_requirement.target()
+                    {
+                        hints.insert(PubGrubHint::RequiresPython {
+                            requires_python: requires_python.clone(),
+                            package: package.clone(),
+                            package_set: self.simplify_set(package_set, package).into_owned(),
+                            package_requires_python: dependency_set.clone(),
+                        });
                     }
                 }
             }
@@ -474,6 +466,7 @@ impl PubGrubReportFormatter<'_> {
                     unavailable_packages,
                     incomplete_packages,
                     fork_urls,
+                    markers,
                 ));
                 hints.extend(self.hints(
                     &derived.cause2,
@@ -482,6 +475,7 @@ impl PubGrubReportFormatter<'_> {
                     unavailable_packages,
                     incomplete_packages,
                     fork_urls,
+                    markers,
                 ));
             }
         }
@@ -578,6 +572,7 @@ impl PubGrubReportFormatter<'_> {
         name: &PackageName,
         set: &Range<Version>,
         selector: &CandidateSelector,
+        markers: &ResolverMarkers,
         hints: &mut IndexSet<PubGrubHint>,
     ) {
         let any_prerelease = set.iter().any(|(start, end)| {
@@ -596,7 +591,7 @@ impl PubGrubReportFormatter<'_> {
 
         if any_prerelease {
             // A pre-release marker appeared in the version requirements.
-            if !selector.prerelease_strategy().allows(name) {
+            if selector.prerelease_strategy().allows(name, markers) != AllowPreRelease::Yes {
                 hints.insert(PubGrubHint::PreReleaseRequested {
                     package: package.clone(),
                     range: self.simplify_set(set, package).into_owned(),
@@ -610,7 +605,7 @@ impl PubGrubReportFormatter<'_> {
                 .find(|version| set.contains(version))
         }) {
             // There are pre-release versions available for the package.
-            if !selector.prerelease_strategy().allows(name) {
+            if selector.prerelease_strategy().allows(name, markers) != AllowPreRelease::Yes {
                 hints.insert(PubGrubHint::PreReleaseAvailable {
                     package: package.clone(),
                     version: version.clone(),
@@ -831,7 +826,7 @@ impl std::fmt::Display for PubGrubHint {
             } => {
                 write!(
                     f,
-                    "{}{} The `Requires-Python` requirement ({}) includes Python versions that are not supported by your dependencies (e.g., {} only supports {}). Consider using a more restrictive `Requires-Python` requirement (like {}).",
+                    "{}{} The `requires-python` value ({}) includes Python versions that are not supported by your dependencies (e.g., {} only supports {}). Consider using a more restrictive `requires-python` value (like {}).",
                     "hint".bold().cyan(),
                     ":".bold(),
                     requires_python.bold(),

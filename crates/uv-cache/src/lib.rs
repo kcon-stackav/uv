@@ -120,7 +120,7 @@ pub struct Cache {
     ///
     /// Included to ensure that the temporary directory exists for the length of the operation, but
     /// is dropped at the end as appropriate.
-    _temp_dir_drop: Option<Arc<tempfile::TempDir>>,
+    temp_dir: Option<Arc<tempfile::TempDir>>,
 }
 
 impl Cache {
@@ -129,7 +129,7 @@ impl Cache {
         Self {
             root: root.into(),
             refresh: Refresh::None(Timestamp::now()),
-            _temp_dir_drop: None,
+            temp_dir: None,
         }
     }
 
@@ -139,7 +139,7 @@ impl Cache {
         Ok(Self {
             root: temp_dir.path().to_path_buf(),
             refresh: Refresh::None(Timestamp::now()),
-            _temp_dir_drop: Some(Arc::new(temp_dir)),
+            temp_dir: Some(Arc::new(temp_dir)),
         })
     }
 
@@ -181,8 +181,8 @@ impl Cache {
 
     /// Create an ephemeral Python environment in the cache.
     pub fn environment(&self) -> io::Result<tempfile::TempDir> {
-        fs::create_dir_all(self.bucket(CacheBucket::Environments))?;
-        tempfile::tempdir_in(self.bucket(CacheBucket::Environments))
+        fs::create_dir_all(self.bucket(CacheBucket::Builds))?;
+        tempfile::tempdir_in(self.bucket(CacheBucket::Builds))
     }
 
     /// Returns `true` if a cache entry must be revalidated given the [`Refresh`] policy.
@@ -271,7 +271,12 @@ impl Cache {
         Ok(id)
     }
 
-    /// Initialize the cache.
+    /// Returns `true` if the [`Cache`] is temporary.
+    pub fn is_temporary(&self) -> bool {
+        self.temp_dir.is_some()
+    }
+
+    /// Initialize the [`Cache`].
     pub fn init(self) -> Result<Self, io::Error> {
         let root = &self.root;
 
@@ -295,9 +300,9 @@ impl Cache {
         // Add an empty .gitignore to the build bucket, to ensure that the cache's own .gitignore
         // doesn't interfere with source distribution builds. Build backends (like hatchling) will
         // traverse upwards to look for .gitignore files.
-        fs::create_dir_all(root.join(CacheBucket::BuiltWheels.to_str()))?;
+        fs::create_dir_all(root.join(CacheBucket::SourceDistributions.to_str()))?;
         match fs::OpenOptions::new().write(true).create_new(true).open(
-            root.join(CacheBucket::BuiltWheels.to_str())
+            root.join(CacheBucket::SourceDistributions.to_str())
                 .join(".gitignore"),
         ) {
             Ok(_) => {}
@@ -312,10 +317,10 @@ impl Cache {
         // We have to put this below the gitignore. Otherwise, if the build backend uses the rust
         // ignore crate it will walk up to the top level .gitignore and ignore its python source
         // files.
-        fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(root.join(CacheBucket::BuiltWheels.to_str()).join(".git"))?;
+        fs::OpenOptions::new().create(true).write(true).open(
+            root.join(CacheBucket::SourceDistributions.to_str())
+                .join(".git"),
+        )?;
 
         Ok(Self {
             root: fs::canonicalize(root)?,
@@ -340,7 +345,7 @@ impl Cache {
     }
 
     /// Run the garbage collector on the cache, removing any dangling entries.
-    pub fn prune(&self) -> Result<Removal, io::Error> {
+    pub fn prune(&self, ci: bool) -> Result<Removal, io::Error> {
         let mut summary = Removal::default();
 
         // First, remove any top-level directories that are unused. These typically represent
@@ -371,7 +376,50 @@ impl Cache {
             }
         }
 
-        // Second, remove any unused archives (by searching for archives that are not symlinked).
+        // Second, remove any cached environments. These are never referenced by symlinks, so we can
+        // remove them directly.
+        match fs::read_dir(self.bucket(CacheBucket::Environments)) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = entry?;
+                    let path = fs_err::canonicalize(entry.path())?;
+                    debug!("Removing dangling cache entry: {}", path.display());
+                    summary += rm_rf(path)?;
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => (),
+            Err(err) => return Err(err),
+        }
+
+        // Third, if enabled, remove all unzipped wheels, leaving only the wheel archives.
+        if ci {
+            // Remove the entire pre-built wheel cache, since every entry is an unzipped wheel.
+            match fs::read_dir(self.bucket(CacheBucket::Wheels)) {
+                Ok(entries) => {
+                    for entry in entries {
+                        let entry = entry?;
+                        let path = fs_err::canonicalize(entry.path())?;
+                        if path.is_dir() {
+                            debug!("Removing unzipped wheel entry: {}", path.display());
+                            summary += rm_rf(path)?;
+                        }
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::NotFound => (),
+                Err(err) => return Err(err),
+            }
+
+            // Remove any unzipped wheels (i.e., symlinks) from the built wheels cache.
+            for entry in walkdir::WalkDir::new(self.bucket(CacheBucket::SourceDistributions)) {
+                let entry = entry?;
+                if entry.file_type().is_symlink() {
+                    debug!("Removing unzipped wheel entry: {}", entry.path().display());
+                    summary += rm_rf(entry.path())?;
+                }
+            }
+        }
+
+        // Third, remove any unused archives (by searching for archives that are not symlinked).
         // TODO(charlie): Remove any unused source distributions. This requires introspecting the
         // cache contents, e.g., reading and deserializing the manifests.
         let mut references = FxHashSet::default();
@@ -382,19 +430,27 @@ impl Cache {
                 for entry in walkdir::WalkDir::new(bucket) {
                     let entry = entry?;
                     if entry.file_type().is_symlink() {
-                        references.insert(entry.path().canonicalize()?);
+                        if let Ok(target) = fs_err::canonicalize(entry.path()) {
+                            references.insert(target);
+                        }
                     }
                 }
             }
         }
 
-        for entry in fs::read_dir(self.bucket(CacheBucket::Archive))? {
-            let entry = entry?;
-            let path = entry.path().canonicalize()?;
-            if !references.contains(&path) {
-                debug!("Removing dangling cache entry: {}", path.display());
-                summary += rm_rf(path)?;
+        match fs::read_dir(self.bucket(CacheBucket::Archive)) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = entry?;
+                    let path = fs_err::canonicalize(entry.path())?;
+                    if !references.contains(&path) {
+                        debug!("Removing dangling cache entry: {}", path.display());
+                        summary += rm_rf(path)?;
+                    }
+                }
             }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => (),
+            Err(err) => return Err(err),
         }
 
         Ok(summary)
@@ -504,8 +560,8 @@ pub enum CacheBucket {
     ///                 └── flask-3.0.0.dist-info
     ///                     └── ...
     Wheels,
-    /// Wheels built from source distributions, their extracted metadata and the cache policy of
-    /// the source distribution.
+    /// Source distributions, wheels built from source distributions, their extracted metadata, and the
+    /// cache policy of the source distribution.
     ///
     /// The structure is similar of that of the `Wheel` bucket, except we have an additional layer
     /// for the source distribution filename and the metadata is at the source distribution-level,
@@ -513,6 +569,9 @@ pub enum CacheBucket {
     ///
     /// TODO(konstin): The cache policy should be on the source distribution level, the metadata we
     /// can put next to the wheels as in the `Wheels` bucket.
+    ///
+    /// The unzipped source distribution is stored in a directory matching the source distribution
+    /// acrhive name.
     ///
     /// Source distributions are built into zipped wheel files (as PEP 517 specifies) and unzipped
     /// lazily before installing. So when resolving, we only build the wheel and store the archive
@@ -545,32 +604,35 @@ pub enum CacheBucket {
     ///
     /// ...may be cached as:
     /// ```text
-    /// built-wheels-v0/
+    /// built-wheels-v3/
     /// ├── git
-    /// │   └── a67db8ed076e3814
-    /// │       └── 843b753e9e8cb74e83cac55598719b39a4d5ef1f
-    /// │           ├── manifest.msgpack
-    /// │           ├── metadata.msgpack
-    /// │           └── pydantic_extra_types-2.1.0-py3-none-any.whl
+    /// │   └── 2122faf3e081fb7a
+    /// │       └── 7a2d650a4a7b4d04
+    /// │           ├── metadata.msgpack
+    /// │           └── pydantic_extra_types-2.9.0-py3-none-any.whl
     /// ├── pypi
-    /// │   └── django
-    /// │       └── django-allauth-0.51.0.tar.gz
-    /// │           ├── django_allauth-0.51.0-py3-none-any.whl
-    /// │           ├── manifest.msgpack
-    /// │           └── metadata.msgpack
+    /// │   └── django-allauth
+    /// │       └── 0.51.0
+    /// │           ├── 0gH-_fwv8tdJ7JwwjJsUc
+    /// │           │   ├── django-allauth-0.51.0.tar.gz
+    /// │           │   │   └── [UNZIPPED CONTENTS]
+    /// │           │   ├── django_allauth-0.51.0-py3-none-any.whl
+    /// │           │   └── metadata.msgpack
+    /// │           └── revision.http
     /// └── url
     ///     └── 6781bd6440ae72c2
-    ///         └── werkzeug
-    ///             └── werkzeug-3.0.1.tar.gz
-    ///                 ├── manifest.msgpack
-    ///                 ├── metadata.msgpack
-    ///                 └── werkzeug-3.0.1-py3-none-any.whl
+    ///         ├── APYY01rbIfpAo_ij9sCY6
+    ///         │   ├── metadata.msgpack
+    ///         │   ├── werkzeug-3.0.1-py3-none-any.whl
+    ///         │   └── werkzeug-3.0.1.tar.gz
+    ///         │       └── [UNZIPPED CONTENTS]
+    ///         └── revision.http
     /// ```
     ///
     /// Structurally, the `manifest.msgpack` is empty, and only contains the caching information
     /// needed to invalidate the cache. The `metadata.msgpack` contains the metadata of the source
     /// distribution.
-    BuiltWheels,
+    SourceDistributions,
     /// Flat index responses, a format very similar to the simple metadata API.
     ///
     /// Cache structure:
@@ -634,20 +696,26 @@ pub enum CacheBucket {
     /// other buckets directly would make atomic operations impossible.
     Archive,
     /// Ephemeral virtual environments used to execute PEP 517 builds and other operations.
+    Builds,
+    /// Reusable virtual environments used to invoke Python tools.
     Environments,
 }
 
 impl CacheBucket {
     fn to_str(self) -> &'static str {
         match self {
-            Self::BuiltWheels => "built-wheels-v3",
+            // Note, next time we change the version we should change the name of this bucket to `source-dists-v0`
+            Self::SourceDistributions => "built-wheels-v3",
             Self::FlatIndex => "flat-index-v0",
             Self::Git => "git-v0",
             Self::Interpreter => "interpreter-v2",
-            Self::Simple => "simple-v9",
+            // Note that when bumping this, you'll also need to bump it
+            // in crates/uv/tests/cache_clean.rs.
+            Self::Simple => "simple-v11",
             Self::Wheels => "wheels-v1",
             Self::Archive => "archive-v0",
-            Self::Environments => "environments-v0",
+            Self::Builds => "builds-v0",
+            Self::Environments => "environments-v1",
         }
     }
 
@@ -673,8 +741,8 @@ impl CacheBucket {
                 let root = cache.bucket(self).join(WheelCacheKind::Pypi);
                 summary += rm_rf(root.join(name.to_string()))?;
 
-                // For alternate indices, we expect a directory for every index, followed by a
-                // directory per package (indexed by name).
+                // For alternate indices, we expect a directory for every index (under an `index`
+                // subdirectory), followed by a directory per package (indexed by name).
                 let root = cache.bucket(self).join(WheelCacheKind::Index);
                 for directory in directories(root) {
                     summary += rm_rf(directory.join(name.to_string()))?;
@@ -687,13 +755,13 @@ impl CacheBucket {
                     summary += rm_rf(directory.join(name.to_string()))?;
                 }
             }
-            Self::BuiltWheels => {
+            Self::SourceDistributions => {
                 // For `pypi` wheels, we expect a directory per package (indexed by name).
                 let root = cache.bucket(self).join(WheelCacheKind::Pypi);
                 summary += rm_rf(root.join(name.to_string()))?;
 
-                // For alternate indices, we expect a directory for every index, followed by a
-                // directory per package (indexed by name).
+                // For alternate indices, we expect a directory for every index (under an `index`
+                // subdirectory), followed by a directory per package (indexed by name).
                 let root = cache.bucket(self).join(WheelCacheKind::Index);
                 for directory in directories(root) {
                     summary += rm_rf(directory.join(name.to_string()))?;
@@ -736,9 +804,9 @@ impl CacheBucket {
                 let root = cache.bucket(self).join(WheelCacheKind::Pypi);
                 summary += rm_rf(root.join(format!("{name}.rkyv")))?;
 
-                // For alternate indices, we expect a directory for every index, followed by a
-                // MsgPack file per package, indexed by name.
-                let root = cache.bucket(self).join(WheelCacheKind::Url);
+                // For alternate indices, we expect a directory for every index (under an `index`
+                // subdirectory), followed by a directory per package (indexed by name).
+                let root = cache.bucket(self).join(WheelCacheKind::Index);
                 for directory in directories(root) {
                     summary += rm_rf(directory.join(format!("{name}.rkyv")))?;
                 }
@@ -758,6 +826,9 @@ impl CacheBucket {
             Self::Archive => {
                 // Nothing to do.
             }
+            Self::Builds => {
+                // Nothing to do.
+            }
             Self::Environments => {
                 // Nothing to do.
             }
@@ -769,12 +840,13 @@ impl CacheBucket {
     pub fn iter() -> impl Iterator<Item = Self> {
         [
             Self::Wheels,
-            Self::BuiltWheels,
+            Self::SourceDistributions,
             Self::FlatIndex,
             Self::Git,
             Self::Interpreter,
             Self::Simple,
             Self::Archive,
+            Self::Builds,
             Self::Environments,
         ]
         .iter()

@@ -1,51 +1,49 @@
-use alloc::string::String;
-use alloc::{ffi::CString, vec, vec::Vec};
-use core::mem::MaybeUninit;
-use core::{
-    ffi::CStr,
-    mem,
-    ptr::{addr_of, addr_of_mut, null, null_mut},
-};
+use std::ffi::{c_void, CStr, CString};
+use std::mem::{size_of, size_of_val};
+use std::vec::Vec;
 
-use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileA, GetFileSizeEx, ReadFile, SetFilePointerEx, FILE_ATTRIBUTE_NORMAL, FILE_BEGIN,
-    FILE_SHARE_READ, OPEN_EXISTING,
-};
-use windows_sys::Win32::{
-    Foundation::*,
-    System::{
-        Console::*,
-        Environment::{GetCommandLineA, GetEnvironmentVariableA, SetCurrentDirectoryA},
-        JobObjects::*,
-        LibraryLoader::GetModuleFileNameA,
-        Threading::*,
+use windows::core::{s, PCSTR, PSTR};
+use windows::Win32::{
+    Foundation::{
+        CloseHandle, GetLastError, SetHandleInformation, SetLastError, BOOL,
+        ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, HANDLE, HANDLE_FLAG_INHERIT,
+        INVALID_HANDLE_VALUE, MAX_PATH, TRUE,
     },
-    UI::WindowsAndMessaging::*,
+    Storage::FileSystem::{
+        CreateFileA, GetFileSizeEx, ReadFile, SetFilePointerEx, FILE_ATTRIBUTE_NORMAL, FILE_BEGIN,
+        FILE_GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING,
+    },
+    System::Console::{
+        GetStdHandle, SetConsoleCtrlHandler, SetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE,
+        STD_OUTPUT_HANDLE,
+    },
+    System::Diagnostics::Debug::{
+        FormatMessageA, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_FROM_SYSTEM,
+        FORMAT_MESSAGE_IGNORE_INSERTS,
+    },
+    System::Environment::GetCommandLineA,
+    System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectA, JobObjectExtendedLimitInformation,
+        QueryInformationJobObject, SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+    },
+    System::LibraryLoader::GetModuleFileNameA,
+    System::Threading::{
+        CreateProcessA, ExitProcess, GetExitCodeProcess, GetStartupInfoA, WaitForInputIdle,
+        WaitForSingleObject, INFINITE, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION,
+        STARTF_USESTDHANDLES, STARTUPINFOA,
+    },
+    UI::WindowsAndMessaging::{
+        CreateWindowExA, DestroyWindow, GetMessageA, PeekMessageA, PostMessageA, HWND_MESSAGE, MSG,
+        PEEK_MESSAGE_REMOVE_TYPE, WINDOW_EX_STYLE, WINDOW_STYLE,
+    },
 };
 
-use crate::helpers::SizeOf;
 use crate::{eprintln, format};
 
 const MAGIC_NUMBER: [u8; 4] = [b'U', b'V', b'U', b'V'];
-const PATH_LEN_SIZE: usize = mem::size_of::<u32>();
+const PATH_LEN_SIZE: usize = size_of::<u32>();
 const MAX_PATH_LEN: u32 = 32 * 1024;
-
-fn getenv(name: &CStr) -> Option<CString> {
-    unsafe {
-        let count = GetEnvironmentVariableA(name.as_ptr() as _, null_mut(), 0);
-        if count == 0 {
-            return None;
-        }
-        let mut value = Vec::<u8>::with_capacity(count as usize);
-        GetEnvironmentVariableA(
-            name.as_ptr() as _,
-            value.as_mut_ptr(),
-            value.capacity() as u32,
-        );
-        value.set_len(count as usize);
-        Some(CString::from_vec_with_nul_unchecked(value))
-    }
-}
 
 /// Transform `<command> <arguments>` to `python <command> <arguments>`.
 fn make_child_cmdline() -> CString {
@@ -69,13 +67,13 @@ fn make_child_cmdline() -> CString {
     // Helpful when debugging trampoline issues
     // eprintln!(
     //     "executable_name: '{}'\nnew_cmdline: {}",
-    //     core::str::from_utf8(executable_name.to_bytes()).unwrap(),
-    //     core::str::from_utf8(child_cmdline.as_slice()).unwrap()
+    //     std::str::from_utf8(executable_name.to_bytes()).unwrap(),
+    //     std::str::from_utf8(child_cmdline.as_slice()).unwrap()
     // );
 
     CString::from_vec_with_nul(child_cmdline).unwrap_or_else(|_| {
-        eprintln!("Child command line is not correctly null terminated.");
-        exit_with_status(1)
+        eprintln!("Child command line is not correctly null terminated");
+        exit_with_status(1);
     })
 }
 
@@ -98,11 +96,11 @@ fn push_quoted_path(path: &CStr, command: &mut Vec<u8>) {
 fn executable_filename() -> CString {
     // MAX_PATH is a lie, Windows paths can be longer.
     // https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file#maximum-path-length-limitation
-    // But it's a good first guess, usually paths are short and we should only need a single attempt.
+    // But it's a good first guess, usually paths are short, and we should only need a single attempt.
     let mut buffer: Vec<u8> = vec![0; MAX_PATH as usize];
     loop {
         // Call the Windows API function to get the module file name
-        let len = unsafe { GetModuleFileNameA(0, buffer.as_mut_ptr(), buffer.len() as u32) };
+        let len = unsafe { GetModuleFileNameA(None, &mut buffer) };
 
         // That's the error condition because len doesn't include the trailing null byte
         if len as usize == buffer.len() {
@@ -116,7 +114,7 @@ fn executable_filename() -> CString {
                 err => {
                     print_last_error_and_exit(&format!(
                         "Failed to get executable name (code: {})",
-                        err
+                        err.0
                     ));
                 }
             }
@@ -127,8 +125,8 @@ fn executable_filename() -> CString {
     }
 
     CString::from_vec_with_nul(buffer).unwrap_or_else(|_| {
-        eprintln!("Executable name is not correctly null terminated.");
-        exit_with_status(1)
+        eprintln!("Executable name is not correctly null terminated");
+        exit_with_status(1);
     })
 }
 
@@ -143,40 +141,33 @@ fn executable_filename() -> CString {
 /// # Panics
 /// If there's any IO error, or the file does not conform to the specified format.
 fn find_python_exe(executable_name: &CStr) -> CString {
-    let file_handle = expect_result(
-        unsafe {
-            CreateFileA(
-                executable_name.as_ptr() as _,
-                GENERIC_READ,
-                FILE_SHARE_READ,
-                null(),
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                0,
-            )
-        },
-        INVALID_HANDLE_VALUE,
-        || {
-            format!(
-                "Failed to open executable '{}'",
-                &*executable_name.to_string_lossy(),
-            )
-        },
-    );
+    let file_handle = unsafe {
+        CreateFileA(
+            PCSTR::from_raw(executable_name.as_ptr() as *const _),
+            FILE_GENERIC_READ.0,
+            FILE_SHARE_READ,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+    }
+    .unwrap_or_else(|_| {
+        print_last_error_and_exit(&format!(
+            "Failed to open executable '{}'",
+            &*executable_name.to_string_lossy(),
+        ))
+    });
 
     let mut file_size: i64 = 0;
     // `SetFilePointerEx` supports setting the file pointer from the back, but pointing it past the file's start
     // results in an error. That's why we need to know the file size to avoid ever seeking past the start of the file.
-    expect_result(
-        unsafe { GetFileSizeEx(file_handle, &mut file_size) },
-        0,
-        || {
-            format!(
-                "Failed to get the size of the executable '{}'",
-                &*executable_name.to_string_lossy(),
-            )
-        },
-    );
+    if unsafe { GetFileSizeEx(file_handle, &mut file_size) }.is_err() {
+        print_last_error_and_exit(&format!(
+            "Failed to get the size of the executable '{}'",
+            &*executable_name.to_string_lossy(),
+        ));
+    }
 
     // Start with a size of 1024 bytes which should be enough for most paths but avoids reading the
     // entire file.
@@ -187,34 +178,24 @@ fn find_python_exe(executable_name: &CStr) -> CString {
         // SAFETY: Casting to usize is safe because we only support 64bit systems where usize is guaranteed to be larger than u32.
         buffer.resize(bytes_to_read as usize, 0);
 
-        expect_result(
-            unsafe {
-                SetFilePointerEx(
-                    file_handle,
-                    file_size - i64::from(bytes_to_read),
-                    null_mut(),
-                    FILE_BEGIN,
-                )
-            },
-            0,
-            || String::from("Failed to set the file pointer to the end of the file."),
-        );
+        if unsafe {
+            SetFilePointerEx(
+                file_handle,
+                file_size - i64::from(bytes_to_read),
+                None,
+                FILE_BEGIN,
+            )
+        }
+        .is_err()
+        {
+            print_last_error_and_exit("Failed to set the file pointer to the end of the file");
+        }
 
-        let mut read_bytes = 0u32;
-
-        expect_result(
-            unsafe {
-                ReadFile(
-                    file_handle,
-                    buffer.as_mut_ptr() as *mut _,
-                    bytes_to_read,
-                    &mut read_bytes,
-                    null_mut(),
-                )
-            },
-            0,
-            || String::from("Failed to read the executable file"),
-        );
+        let mut read_bytes = bytes_to_read;
+        if unsafe { ReadFile(file_handle, Some(&mut buffer), Some(&mut read_bytes), None) }.is_err()
+        {
+            print_last_error_and_exit("Failed to read the executable file");
+        }
 
         // Truncate the buffer to the actual number of bytes read.
         buffer.truncate(read_bytes as usize);
@@ -231,11 +212,11 @@ fn find_python_exe(executable_name: &CStr) -> CString {
             Some(path_len) => {
                 let path_len = u32::from_le_bytes(path_len.try_into().unwrap_or_else(|_| {
                     eprintln!("Slice length is not equal to 4 bytes");
-                    exit_with_status(1)
+                    exit_with_status(1);
                 }));
 
                 if path_len > MAX_PATH_LEN {
-                    eprintln!("Only paths with a length up to 32KBs are supported but the python path has a length of {}.", path_len);
+                    eprintln!("Only paths with a length up to 32KBs are supported but the python path has a length of {}", path_len);
                     exit_with_status(1);
                 }
 
@@ -256,8 +237,8 @@ fn find_python_exe(executable_name: &CStr) -> CString {
             buffer.push(b'\0');
 
             break CString::from_vec_with_nul(buffer).unwrap_or_else(|_| {
-                eprintln!("Python executable path is not correctly null terminated.");
-                exit_with_status(1)
+                eprintln!("Python executable path is not correctly null terminated");
+                exit_with_status(1);
             });
         } else {
             // SAFETY: Casting to u32 is safe because `path_len` is guaranteed to be less than 32KBs,
@@ -265,15 +246,15 @@ fn find_python_exe(executable_name: &CStr) -> CString {
             bytes_to_read = (path_len + MAGIC_NUMBER.len() + PATH_LEN_SIZE) as u32;
 
             if i64::from(bytes_to_read) > file_size {
-                eprintln!("The length of the python executable path exceeds the file size. Verify that the path length is appended to the end of the launcher script as a u32 in little endian.");
+                eprintln!("The length of the python executable path exceeds the file size. Verify that the path length is appended to the end of the launcher script as a u32 in little endian");
                 exit_with_status(1);
             }
         }
     };
 
-    expect_result(unsafe { CloseHandle(file_handle) }, 0, || {
-        String::from("Failed to close file handle")
-    });
+    if unsafe { CloseHandle(file_handle) }.is_err() {
+        print_last_error_and_exit("Failed to close file handle");
+    }
 
     if is_absolute(&path) {
         path
@@ -285,14 +266,14 @@ fn find_python_exe(executable_name: &CStr) -> CString {
         {
             Some(parent_dir) => parent_dir,
             None => {
-                eprintln!("Script path has unknown separator characters.");
-                exit_with_status(1)
+                eprintln!("Script path has unknown separator characters");
+                exit_with_status(1);
             }
         };
         let final_path = [parent_dir, b"\\", path.as_bytes()].concat();
         CString::new(final_path).unwrap_or_else(|_| {
-            eprintln!("Could not construct the absolute path to the Python executable.");
-            exit_with_status(1)
+            eprintln!("Could not construct the absolute path to the Python executable");
+            exit_with_status(1);
         })
     }
 }
@@ -307,13 +288,12 @@ fn is_absolute(path: &CStr) -> bool {
 }
 
 fn push_arguments(output: &mut Vec<u8>) {
-    let arguments_as_str = unsafe {
-        // SAFETY: We rely on `GetCommandLineA` to return a valid pointer to a null terminated string.
-        CStr::from_ptr(GetCommandLineA() as _)
-    };
+    // SAFETY: We rely on `GetCommandLineA` to return a valid pointer to a null terminated string.
+    let arguments_as_str = unsafe { GetCommandLineA() };
+    let arguments_as_bytes = unsafe { arguments_as_str.as_bytes() };
 
     // Skip over the executable name and then push the rest of the arguments
-    let after_executable = skip_one_argument(arguments_as_str.to_bytes());
+    let after_executable = skip_one_argument(arguments_as_bytes);
 
     output.extend_from_slice(after_executable)
 }
@@ -350,92 +330,108 @@ fn skip_one_argument(arguments: &[u8]) -> &[u8] {
 }
 
 fn make_job_object() -> HANDLE {
-    unsafe {
-        let job = CreateJobObjectW(null(), null());
-        let mut job_info = MaybeUninit::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>::uninit();
-        let mut retlen = 0u32;
-        expect_result(
-            QueryInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                job_info.as_mut_ptr() as *mut _,
-                job_info.size_of(),
-                &mut retlen as *mut _,
-            ),
-            0,
-            || String::from("Error from QueryInformationJobObject"),
-        );
-        let mut job_info = job_info.assume_init();
-        job_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        job_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
-        expect_result(
-            SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                addr_of!(job_info) as *const _,
-                job_info.size_of(),
-            ),
-            0,
-            || String::from("Error from SetInformationJobObject"),
-        );
-        job
+    let job = unsafe { CreateJobObjectA(None, None) }
+        .unwrap_or_else(|_| print_last_error_and_exit("Job creation failed"));
+    let mut job_info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    let mut retlen = 0u32;
+    if unsafe {
+        QueryInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &mut job_info as *mut _ as *mut c_void,
+            size_of_val(&job_info) as u32,
+            Some(&mut retlen),
+        )
     }
+    .is_err()
+    {
+        print_last_error_and_exit("Job information querying failed");
+    }
+    job_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    job_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+    if unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &job_info as *const _ as *const c_void,
+            size_of_val(&job_info) as u32,
+        )
+    }
+    .is_err()
+    {
+        print_last_error_and_exit("Job information setting failed");
+    }
+    job
 }
 
 fn spawn_child(si: &STARTUPINFOA, child_cmdline: CString) -> HANDLE {
-    unsafe {
-        if si.dwFlags & STARTF_USESTDHANDLES != 0 {
-            // ignore errors from these -- if the handle's not inheritable/not valid, then nothing
-            // we can do
-            SetHandleInformation(si.hStdInput, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-            SetHandleInformation(si.hStdOutput, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-            SetHandleInformation(si.hStdError, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-        }
-        let mut child_process_info = MaybeUninit::<PROCESS_INFORMATION>::uninit();
-        expect_result(
-            CreateProcessA(
-                null(),
-                // Why does this have to be mutable? Who knows. But it's not a mistake --
-                // MS explicitly documents that this buffer might be mutated by CreateProcess.
-                child_cmdline.as_ptr().cast_mut() as _,
-                null(),
-                null(),
-                1,
-                0,
-                null(),
-                null(),
-                addr_of!(*si),
-                child_process_info.as_mut_ptr(),
-            ),
-            0,
-            || String::from("Failed to spawn the python child process"),
-        );
-        let child_process_info = child_process_info.assume_init();
-        CloseHandle(child_process_info.hThread);
-        child_process_info.hProcess
+    // See distlib/PC/launcher.c::run_child
+    if (si.dwFlags & STARTF_USESTDHANDLES).0 != 0 {
+        // ignore errors, if the handles are not inheritable/valid, then nothing we can do
+        unsafe { SetHandleInformation(si.hStdInput, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }
+            .unwrap_or_else(|_| eprintln!("Making stdin inheritable failed"));
+        unsafe { SetHandleInformation(si.hStdOutput, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }
+            .unwrap_or_else(|_| eprintln!("Making stdout inheritable failed"));
+        unsafe { SetHandleInformation(si.hStdError, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }
+            .unwrap_or_else(|_| eprintln!("Making stderr inheritable failed"));
     }
+    let mut child_process_info = PROCESS_INFORMATION::default();
+    unsafe {
+        CreateProcessA(
+            None,
+            // Why does this have to be mutable? Who knows. But it's not a mistake --
+            // MS explicitly documents that this buffer might be mutated by CreateProcess.
+            PSTR::from_raw(child_cmdline.as_ptr() as *mut _),
+            None,
+            None,
+            true,
+            PROCESS_CREATION_FLAGS(0),
+            None,
+            None,
+            si,
+            &mut child_process_info,
+        )
+    }
+    .unwrap_or_else(|_| {
+        print_last_error_and_exit("Failed to spawn the python child process");
+    });
+    unsafe { CloseHandle(child_process_info.hThread) }.unwrap_or_else(|_| {
+        print_last_error_and_exit("Failed to close handle to python child process main thread");
+    });
+    // Return handle to child process.
+    child_process_info.hProcess
 }
 
 // Apparently, the Windows C runtime has a secret way to pass file descriptors into child
 // processes, by using the .lpReserved2 field. We want to close those file descriptors too.
 // The UCRT source code has details on the memory layout (see also initialize_inherited_file_handles_nolock):
-//   https://github.com/huangqinjin/ucrt/blob/10.0.19041.0/lowio/ioinit.cpp#L190-L223
+// https://github.com/huangqinjin/ucrt/blob/10.0.19041.0/lowio/ioinit.cpp#L190-L223
 fn close_handles(si: &STARTUPINFOA) {
-    unsafe {
-        for handle in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE] {
-            CloseHandle(GetStdHandle(handle));
-            SetStdHandle(handle, INVALID_HANDLE_VALUE);
+    // See distlib/PC/launcher.c::cleanup_standard_io()
+    for std_handle in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        if let Ok(handle) = unsafe { GetStdHandle(std_handle) } {
+            unsafe { CloseHandle(handle) }.unwrap_or_else(|_| {
+                eprintln!("Failed to close standard device handle {}", handle.0 as u32);
+            });
+            unsafe { SetStdHandle(std_handle, INVALID_HANDLE_VALUE) }.unwrap_or_else(|_| {
+                eprintln!("Failed to modify standard device handle {}", std_handle.0);
+            });
         }
+    }
 
-        if si.cbReserved2 == 0 || si.lpReserved2.is_null() {
-            return;
-        }
-        let crt_magic = si.lpReserved2 as *const u32;
-        let handle_count = crt_magic.read_unaligned() as isize;
-        let handle_start = crt_magic.offset(1 + handle_count);
-        for i in 0..handle_count {
-            CloseHandle(handle_start.offset(i).read_unaligned() as HANDLE);
-        }
+    // See distlib/PC/launcher.c::cleanup_fds()
+    if si.cbReserved2 == 0 || si.lpReserved2.is_null() {
+        return;
+    }
+    let crt_magic = si.lpReserved2 as *const u32;
+    let handle_count = unsafe { crt_magic.read_unaligned() } as isize;
+    let handle_start = unsafe { crt_magic.offset(1 + handle_count) };
+    for i in 0..handle_count {
+        let handle_ptr = unsafe { handle_start.offset(i).read_unaligned() } as *const HANDLE;
+        // Close all fds inherited from the parent, except for the standard I/O fds.
+        unsafe { CloseHandle(*handle_ptr) }.unwrap_or_else(|_| {
+            eprintln!("Failed to close child file descriptors at {}", i);
+        });
     }
 }
 
@@ -459,139 +455,123 @@ fn close_handles(si: &STARTUPINFOA) {
     Is creating a window and calling PeekMessage the best way to do this? idk.
 */
 fn clear_app_starting_state(child_handle: HANDLE) {
+    let mut msg = MSG::default();
     unsafe {
-        PostMessageA(0, 0, 0, 0);
-        let mut msg = MaybeUninit::<MSG>::uninit();
-        GetMessageA(msg.as_mut_ptr(), 0, 0, 0);
-        WaitForInputIdle(child_handle, INFINITE);
-        let hwnd = CreateWindowExA(
-            0,
-            c"STATIC".as_ptr() as *const _,
-            c"uv Python Trampoline".as_ptr() as *const _,
-            0,
+        // End the launcher's "app starting" cursor state.
+        PostMessageA(None, 0, None, None).unwrap_or_else(|_| {
+            eprintln!("Failed to post a message to specified window");
+        });
+        if GetMessageA(&mut msg, None, 0, 0) != TRUE {
+            eprintln!("Failed to retrieve posted window message");
+        }
+        // Proxy the child's input idle event.
+        if WaitForInputIdle(child_handle, INFINITE) != 0 {
+            eprintln!("Failed to wait for input from window");
+        }
+        // Signal the process input idle event by creating a window and pumping
+        // sent messages. The window class isn't important, so just use the
+        // system "STATIC" class.
+        if let Ok(hwnd) = CreateWindowExA(
+            WINDOW_EX_STYLE(0),
+            s!("STATIC"),
+            s!("uv Python Trampoline"),
+            WINDOW_STYLE(0),
             0,
             0,
             0,
             0,
             HWND_MESSAGE,
-            0,
-            0,
-            null(),
-        );
-        PeekMessageA(msg.as_mut_ptr(), hwnd, 0, 0, 0);
-        DestroyWindow(hwnd);
+            None,
+            None,
+            None,
+        ) {
+            // Process all sent messages and signal input idle.
+            let _ = PeekMessageA(&mut msg, hwnd, 0, 0, PEEK_MESSAGE_REMOVE_TYPE(0));
+            DestroyWindow(hwnd).unwrap_or_else(|_| {
+                print_last_error_and_exit("Failed to destroy temporary window");
+            });
+        }
     }
 }
 
 pub fn bounce(is_gui: bool) -> ! {
-    unsafe {
-        let child_cmdline = make_child_cmdline();
+    let child_cmdline = make_child_cmdline();
 
-        let mut si = MaybeUninit::<STARTUPINFOA>::uninit();
-        GetStartupInfoA(si.as_mut_ptr());
-        let si = si.assume_init();
+    let mut si = STARTUPINFOA::default();
+    unsafe { GetStartupInfoA(&mut si) }
 
-        let child_handle = spawn_child(&si, child_cmdline);
-        let job = make_job_object();
-        expect_result(AssignProcessToJobObject(job, child_handle), 0, || {
-            String::from("Error from AssignProcessToJobObject")
-        });
+    let child_handle = spawn_child(&si, child_cmdline);
+    let job = make_job_object();
 
-        // (best effort) Close all the handles that we can
-        close_handles(&si);
-
-        // (best effort) Switch to some innocuous directory so we don't hold the original
-        // cwd open.
-        if let Some(tmp) = getenv(c"TEMP") {
-            SetCurrentDirectoryA(tmp.as_ptr() as *const _);
-        } else {
-            SetCurrentDirectoryA(c"c:\\".as_ptr() as *const _);
-        }
-
-        // We want to ignore control-C/control-Break/logout/etc.; the same event will
-        // be delivered to the child, so we let them decide whether to exit or not.
-        unsafe extern "system" fn control_key_handler(_: u32) -> BOOL {
-            1
-        }
-        SetConsoleCtrlHandler(Some(control_key_handler), 1);
-
-        if is_gui {
-            clear_app_starting_state(child_handle);
-        }
-
-        WaitForSingleObject(child_handle, INFINITE);
-        let mut exit_code = 0u32;
-        expect_result(
-            GetExitCodeProcess(child_handle, addr_of_mut!(exit_code)),
-            0,
-            || String::from("Error from GetExitCodeProcess"),
-        );
-        exit_with_status(exit_code);
-    }
-}
-
-/// Unwraps the result of the C call by asserting that it doesn't match the `error_code`.
-///
-/// Prints the passed error message if the `actual_result` is equal to `error_code` and exits the process with status 1.
-#[inline]
-fn expect_result<T, F>(actual_result: T, error_code: T, error_message: F) -> T
-where
-    T: Eq,
-    F: FnOnce() -> String,
-{
-    if actual_result == error_code {
-        print_last_error_and_exit(&error_message());
+    if unsafe { AssignProcessToJobObject(job, child_handle) }.is_err() {
+        print_last_error_and_exit("Failed to assign child process to the job")
     }
 
-    actual_result
+    // (best effort) Close all the handles that we can
+    close_handles(&si);
+
+    // (best effort) Switch to some innocuous directory, so we don't hold the original cwd open.
+    // See distlib/PC/launcher.c::switch_working_directory
+    if std::env::set_current_dir(std::env::temp_dir()).is_err() {
+        eprintln!("Failed to set cwd to temp dir");
+    }
+
+    // We want to ignore control-C/control-Break/logout/etc.; the same event will
+    // be delivered to the child, so we let them decide whether to exit or not.
+    unsafe extern "system" fn control_key_handler(_: u32) -> BOOL {
+        TRUE
+    }
+    // See distlib/PC/launcher.c::control_key_handler
+    unsafe { SetConsoleCtrlHandler(Some(control_key_handler), true) }.unwrap_or_else(|_| {
+        print_last_error_and_exit("Control handler setting failed");
+    });
+
+    if is_gui {
+        clear_app_starting_state(child_handle);
+    }
+
+    let _ = unsafe { WaitForSingleObject(child_handle, INFINITE) };
+    let mut exit_code = 0u32;
+    if unsafe { GetExitCodeProcess(child_handle, &mut exit_code) }.is_err() {
+        print_last_error_and_exit("Failed to get exit code of child process");
+    }
+    exit_with_status(exit_code);
 }
 
 #[cold]
 fn print_last_error_and_exit(message: &str) -> ! {
-    use windows_sys::Win32::{
-        Foundation::*,
-        System::Diagnostics::Debug::{
-            FormatMessageA, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_FROM_SYSTEM,
-            FORMAT_MESSAGE_IGNORE_INSERTS,
-        },
-    };
-
     let err = unsafe { GetLastError() };
-    eprintln!("Received error code: {}", err);
-    let mut msg_ptr: *mut u8 = core::ptr::null_mut();
+    eprintln!("Received error code: {}", err.0);
+    let mut msg_ptr = PSTR::null();
     let size = unsafe {
         FormatMessageA(
             FORMAT_MESSAGE_ALLOCATE_BUFFER
                 | FORMAT_MESSAGE_FROM_SYSTEM
                 | FORMAT_MESSAGE_IGNORE_INSERTS,
-            null(),
-            err,
+            None,
+            err.0,
             0,
-            // Weird calling convention: this argument is typed as *mut u16,
+            // Weird calling convention: this argument is typed as *mut u8,
             // but if you pass FORMAT_MESSAGE_ALLOCATE_BUFFER then you have to
-            // *actually* pass in a *mut *mut u16 and just lie about the type.
+            // *actually* pass in a *mut *mut u8 and just lie about the type.
             // Getting Rust to do this requires some convincing.
-            core::ptr::addr_of_mut!(msg_ptr) as *mut _ as _,
+            PSTR(&mut msg_ptr.0 as *mut _ as *mut _),
             0,
-            core::ptr::null(),
+            None,
         )
     };
 
-    if size == 0 {
+    if size == 0 || msg_ptr.0.is_null() {
         eprintln!(
             "{}: with code {} (failed to get error message)",
-            message, err
+            message, err.0
         );
     } else {
         let reason = unsafe {
-            let reason = core::slice::from_raw_parts(msg_ptr, size as usize + 1);
-            CStr::from_bytes_with_nul_unchecked(reason)
+            let reason = std::slice::from_raw_parts(msg_ptr.0, size as usize);
+            std::str::from_utf8_unchecked(reason)
         };
-        eprintln!(
-            "(uv internal error) {}: {}",
-            message,
-            &*reason.to_string_lossy()
-        );
+        eprintln!("(uv internal error) {}: {}", message, reason);
     }
 
     // Note: We don't need to free the buffer here because we're going to exit anyway.

@@ -42,6 +42,9 @@ pub enum PubGrubPackageInner {
     /// A Python version.
     Python(PubGrubPython),
     /// A Python package.
+    ///
+    /// Note that it is guaranteed that `extra` and `dev` are never both
+    /// `Some`. That is, if one is `Some` then the other must be `None`.
     Package {
         name: PackageName,
         extra: Option<ExtraName>,

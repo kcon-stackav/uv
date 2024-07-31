@@ -1,7 +1,7 @@
 //! DO NOT EDIT
 //!
 //! Generated with `./scripts/sync_scenarios.sh`
-//! Scenarios from <https://github.com/astral-sh/packse/tree/0.3.29/scenarios>
+//! Scenarios from <https://github.com/astral-sh/packse/tree/0.3.31/scenarios>
 //!
 #![cfg(all(feature = "python", feature = "pypi", unix))]
 
@@ -13,7 +13,7 @@ use assert_cmd::prelude::*;
 
 use common::venv_to_interpreter;
 
-use crate::common::{get_bin, uv_snapshot, TestContext};
+use crate::common::{build_vendor_links_url, get_bin, packse_index_url, uv_snapshot, TestContext};
 
 mod common;
 
@@ -46,9 +46,9 @@ fn command(context: &TestContext) -> Command {
         .arg("pip")
         .arg("install")
         .arg("--index-url")
-        .arg("https://astral-sh.github.io/packse/0.3.29/simple-html/")
+        .arg(packse_index_url())
         .arg("--find-links")
-        .arg("https://raw.githubusercontent.com/astral-sh/packse/0.3.29/vendor/links.html");
+        .arg(build_vendor_links_url());
     context.add_shared_args(&mut command);
     command.env_remove("UV_EXCLUDE_NEWER");
     command
@@ -701,7 +701,7 @@ fn missing_extra() {
     Prepared 1 package in [TIME]
     Installed 1 package in [TIME]
      + package-a==1.0.0
-    warning: The package `package-a==1.0.0` does not have an extra named `extra`.
+    warning: The package `package-a==1.0.0` does not have an extra named `extra`
     "###);
 
     // Missing extras are ignored during resolution.
@@ -1074,7 +1074,7 @@ fn extra_does_not_exist_backtrack() {
     Prepared 1 package in [TIME]
     Installed 1 package in [TIME]
      + package-a==3.0.0
-    warning: The package `package-a==3.0.0` does not have an extra named `extra`.
+    warning: The package `package-a==3.0.0` does not have an extra named `extra`
     "###);
 
     // The resolver should not backtrack to `a==1.0.0` because missing extras are
@@ -1409,7 +1409,7 @@ fn local_used_without_sdist() {
 
     ----- stderr -----
       × No solution found when resolving dependencies:
-      ╰─▶ Because package-a==1.2.3 has no wheels are available with a matching Python ABI and you require package-a==1.2.3, we can conclude that the requirements are unsatisfiable.
+      ╰─▶ Because package-a==1.2.3 has no wheels with a matching Python ABI tag and you require package-a==1.2.3, we can conclude that the requirements are unsatisfiable.
     "###);
 
     // The version '1.2.3+foo' satisfies the constraint '==1.2.3'.
@@ -1783,7 +1783,7 @@ fn local_transitive_confounding() {
 
     ----- stderr -----
       × No solution found when resolving dependencies:
-      ╰─▶ Because package-b==2.0.0 has no wheels are available with a matching Python ABI and package-a==1.0.0 depends on package-b==2.0.0, we can conclude that package-a==1.0.0 cannot be used.
+      ╰─▶ Because package-b==2.0.0 has no wheels with a matching Python ABI tag and package-a==1.0.0 depends on package-b==2.0.0, we can conclude that package-a==1.0.0 cannot be used.
           And because only package-a==1.0.0 is available and you require package-a, we can conclude that the requirements are unsatisfiable.
     "###);
 
@@ -4194,7 +4194,7 @@ fn no_sdist_no_wheels_with_matching_platform() {
 
     ----- stderr -----
       × No solution found when resolving dependencies:
-      ╰─▶ Because only package-a==1.0.0 is available and package-a==1.0.0 has no wheels are available with a matching platform, we can conclude that all versions of package-a cannot be used.
+      ╰─▶ Because only package-a==1.0.0 is available and package-a==1.0.0 has no wheels with a matching platform tag, we can conclude that all versions of package-a cannot be used.
           And because you require package-a, we can conclude that the requirements are unsatisfiable.
     "###);
 
@@ -4235,7 +4235,7 @@ fn no_sdist_no_wheels_with_matching_python() {
 
     ----- stderr -----
       × No solution found when resolving dependencies:
-      ╰─▶ Because only package-a==1.0.0 is available and package-a==1.0.0 has no wheels are available with a matching Python implementation, we can conclude that all versions of package-a cannot be used.
+      ╰─▶ Because only package-a==1.0.0 is available and package-a==1.0.0 has no wheels with a matching Python implementation tag, we can conclude that all versions of package-a cannot be used.
           And because you require package-a, we can conclude that the requirements are unsatisfiable.
     "###);
 
@@ -4276,7 +4276,7 @@ fn no_sdist_no_wheels_with_matching_abi() {
 
     ----- stderr -----
       × No solution found when resolving dependencies:
-      ╰─▶ Because only package-a==1.0.0 is available and package-a==1.0.0 has no wheels are available with a matching Python ABI, we can conclude that all versions of package-a cannot be used.
+      ╰─▶ Because only package-a==1.0.0 is available and package-a==1.0.0 has no wheels with a matching Python ABI tag, we can conclude that all versions of package-a cannot be used.
           And because you require package-a, we can conclude that the requirements are unsatisfiable.
     "###);
 
@@ -4358,7 +4358,7 @@ fn only_wheels_no_binary() {
 
     ----- stderr -----
       × No solution found when resolving dependencies:
-      ╰─▶ Because only package-a==1.0.0 is available and package-a==1.0.0 has no available source distribution and using wheels is disabled, we can conclude that all versions of package-a cannot be used.
+      ╰─▶ Because only package-a==1.0.0 is available and package-a==1.0.0 has no source distribution and using wheels is disabled, we can conclude that all versions of package-a cannot be used.
           And because you require package-a, we can conclude that the requirements are unsatisfiable.
     "###);
 
@@ -4769,7 +4769,7 @@ fn transitive_package_only_yanked_in_range_opt_in() {
     Installed 2 packages in [TIME]
      + package-a==0.1.0
      + package-b==1.0.0
-    warning: `package-b==1.0.0` is yanked (reason: "Yanked for testing").
+    warning: `package-b==1.0.0` is yanked (reason: "Yanked for testing")
     "###);
 
     // Since the user included a dependency on `b` with an exact specifier, the yanked
@@ -4901,7 +4901,7 @@ fn transitive_yanked_and_unyanked_dependency_opt_in() {
      + package-a==1.0.0
      + package-b==1.0.0
      + package-c==2.0.0
-    warning: `package-c==2.0.0` is yanked (reason: "Yanked for testing").
+    warning: `package-c==2.0.0` is yanked (reason: "Yanked for testing")
     "###);
 
     // Since the user explicitly selected the yanked version of `c`, it can be

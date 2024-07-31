@@ -1,6 +1,6 @@
 //! Common operations shared across the `pip` API and subcommands.
 
-use std::fmt::Write;
+use std::fmt::{self, Write};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context};
@@ -15,7 +15,6 @@ use distribution_types::{
     DistributionMetadata, IndexLocations, InstalledMetadata, LocalDist, Name, Resolution,
 };
 use install_wheel_rs::linker::LinkMode;
-use pep508_rs::MarkerEnvironment;
 use platform_tags::Tags;
 use pypi_types::Requirement;
 use uv_cache::Cache;
@@ -29,15 +28,15 @@ use uv_distribution::DistributionDatabase;
 use uv_fs::Simplified;
 use uv_installer::{Plan, Planner, Preparer, SitePackages};
 use uv_normalize::{GroupName, PackageName};
+use uv_python::PythonEnvironment;
 use uv_requirements::{
     LookaheadResolver, NamedRequirementsResolver, RequirementsSource, RequirementsSpecification,
     SourceTreeResolver,
 };
 use uv_resolver::{
     DependencyMode, Exclusions, FlatIndex, InMemoryIndex, Manifest, Options, Preference,
-    Preferences, PythonRequirement, ResolutionGraph, Resolver,
+    Preferences, PythonRequirement, ResolutionGraph, Resolver, ResolverMarkers,
 };
-use uv_toolchain::PythonEnvironment;
 use uv_types::{HashStrategy, InFlight, InstalledPackagesProvider};
 use uv_warnings::warn_user;
 
@@ -87,7 +86,7 @@ pub(crate) async fn resolve<InstalledPackages: InstalledPackagesProvider>(
     reinstall: &Reinstall,
     upgrade: &Upgrade,
     tags: Option<&Tags>,
-    markers: Option<&MarkerEnvironment>,
+    markers: ResolverMarkers,
     python_requirement: PythonRequirement,
     client: &RegistryClient,
     flat_index: &FlatIndex,
@@ -97,6 +96,7 @@ pub(crate) async fn resolve<InstalledPackages: InstalledPackagesProvider>(
     options: Options,
     printer: Printer,
     preview: PreviewMode,
+    quiet: bool,
 ) -> Result<ResolutionGraph, Error> {
     let start = std::time::Instant::now();
 
@@ -180,9 +180,13 @@ pub(crate) async fn resolve<InstalledPackages: InstalledPackagesProvider>(
     .await?;
 
     // Collect constraints and overrides.
-    let constraints = Constraints::from_requirements(constraints);
+    let constraints = Constraints::from_requirements(
+        constraints
+            .into_iter()
+            .chain(upgrade.constraints().cloned()),
+    );
     let overrides = Overrides::from_requirements(overrides);
-    let preferences = Preferences::from_iter(preferences, markers);
+    let preferences = Preferences::from_iter(preferences, markers.marker_environment());
 
     // Determine any lookahead requirements.
     let lookaheads = match options.dependency_mode {
@@ -197,7 +201,7 @@ pub(crate) async fn resolve<InstalledPackages: InstalledPackagesProvider>(
                 DistributionDatabase::new(client, build_dispatch, concurrency.downloads, preview),
             )
             .with_reporter(ResolverReporter::from(printer))
-            .resolve(markers)
+            .resolve(&markers)
             .await?
         }
         DependencyMode::Direct => Vec::new(),
@@ -246,19 +250,31 @@ pub(crate) async fn resolve<InstalledPackages: InstalledPackagesProvider>(
         resolver.resolve().await?
     };
 
+    if !quiet {
+        resolution_success(&resolution, start, printer)?;
+    }
+
+    Ok(resolution)
+}
+
+// Prints a success message after completing resolution.
+pub(crate) fn resolution_success(
+    resolution: &ResolutionGraph,
+    start: std::time::Instant,
+    printer: Printer,
+) -> fmt::Result {
     let s = if resolution.len() == 1 { "" } else { "s" };
+
     writeln!(
         printer.stderr(),
         "{}",
         format!(
-            "Resolved {} in {}",
+            "Resolved {} {}",
             format!("{} package{}", resolution.len(), s).bold(),
-            elapsed(start.elapsed())
+            format!("in {}", elapsed(start.elapsed())).dimmed()
         )
         .dimmed()
-    )?;
-
-    Ok(resolution)
+    )
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -342,9 +358,9 @@ pub(crate) async fn install(
             printer.stderr(),
             "{}",
             format!(
-                "Audited {} in {}",
+                "Audited {} {}",
                 format!("{} package{}", resolution.len(), s).bold(),
-                elapsed(start.elapsed())
+                format!("in {}", elapsed(start.elapsed())).dimmed()
             )
             .dimmed()
         )?;
@@ -386,9 +402,9 @@ pub(crate) async fn install(
             printer.stderr(),
             "{}",
             format!(
-                "Prepared {} in {}",
+                "Prepared {} {}",
                 format!("{} package{}", wheels.len(), s).bold(),
-                elapsed(start.elapsed())
+                format!("in {}", elapsed(start.elapsed())).dimmed()
             )
             .dimmed()
         )?;
@@ -433,31 +449,35 @@ pub(crate) async fn install(
             printer.stderr(),
             "{}",
             format!(
-                "Uninstalled {} in {}",
+                "Uninstalled {} {}",
                 format!("{} package{}", extraneous.len() + reinstalls.len(), s).bold(),
-                elapsed(start.elapsed())
+                format!("in {}", elapsed(start.elapsed())).dimmed()
             )
             .dimmed()
         )?;
     }
 
     // Install the resolved distributions.
-    let wheels = wheels.into_iter().chain(cached).collect::<Vec<_>>();
+    let mut wheels = wheels.into_iter().chain(cached).collect::<Vec<_>>();
     if !wheels.is_empty() {
         let start = std::time::Instant::now();
-        uv_installer::Installer::new(venv)
+        wheels = uv_installer::Installer::new(venv)
             .with_link_mode(link_mode)
+            .with_cache(cache)
             .with_reporter(InstallReporter::from(printer).with_length(wheels.len() as u64))
-            .install(&wheels)?;
+            // This technically can block the runtime, but we are on the main thread and
+            // have no other running tasks at this point, so this lets us avoid spawning a blocking
+            // task.
+            .install_blocking(wheels)?;
 
         let s = if wheels.len() == 1 { "" } else { "s" };
         writeln!(
             printer.stderr(),
             "{}",
             format!(
-                "Installed {} in {}",
+                "Installed {} {}",
                 format!("{} package{}", wheels.len(), s).bold(),
-                elapsed(start.elapsed())
+                format!("in {}", elapsed(start.elapsed())).dimmed()
             )
             .dimmed()
         )?;
@@ -501,9 +521,9 @@ fn report_dry_run(
             printer.stderr(),
             "{}",
             format!(
-                "Audited {} in {}",
+                "Audited {} {}",
                 format!("{} package{}", resolution.len(), s).bold(),
-                elapsed(start.elapsed())
+                format!("in {}", elapsed(start.elapsed())).dimmed()
             )
             .dimmed()
         )?;

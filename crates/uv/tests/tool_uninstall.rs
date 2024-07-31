@@ -2,6 +2,7 @@
 
 use assert_cmd::assert::OutputAssertExt;
 use assert_fs::fixture::PathChild;
+
 use common::{uv_snapshot, TestContext};
 
 mod common;
@@ -29,8 +30,8 @@ fn tool_uninstall() {
     ----- stdout -----
 
     ----- stderr -----
-    warning: `uv tool uninstall` is experimental and may change without warning.
-    Uninstalled: black, blackd
+    warning: `uv tool uninstall` is experimental and may change without warning
+    Uninstalled 2 executables: black, blackd
     "###);
 
     // After uninstalling the tool, it shouldn't be listed.
@@ -42,7 +43,7 @@ fn tool_uninstall() {
     ----- stdout -----
 
     ----- stderr -----
-    warning: `uv tool list` is experimental and may change without warning.
+    warning: `uv tool list` is experimental and may change without warning
     No tools installed
     "###);
 
@@ -50,13 +51,14 @@ fn tool_uninstall() {
     uv_snapshot!(context.filters(), context.tool_install()
         .arg("black==24.2.0")
         .env("UV_TOOL_DIR", tool_dir.as_os_str())
-        .env("XDG_BIN_HOME", bin_dir.as_os_str()), @r###"
+        .env("XDG_BIN_HOME", bin_dir.as_os_str())
+        .env("PATH", bin_dir.as_os_str()), @r###"
     success: true
     exit_code: 0
     ----- stdout -----
 
     ----- stderr -----
-    warning: `uv tool install` is experimental and may change without warning.
+    warning: `uv tool install` is experimental and may change without warning
     Resolved 6 packages in [TIME]
     Installed 6 packages in [TIME]
      + black==24.2.0
@@ -65,7 +67,7 @@ fn tool_uninstall() {
      + packaging==24.0
      + pathspec==0.12.1
      + platformdirs==4.2.0
-    Installed: black, blackd
+    Installed 2 executables: black, blackd
     "###);
 }
 
@@ -83,8 +85,8 @@ fn tool_uninstall_not_installed() {
     ----- stdout -----
 
     ----- stderr -----
-    warning: `uv tool uninstall` is experimental and may change without warning.
-    error: Tool `black` is not installed
+    warning: `uv tool uninstall` is experimental and may change without warning
+    error: `black` is not installed
     "###);
 }
 
@@ -113,7 +115,37 @@ fn tool_uninstall_missing_receipt() {
     ----- stdout -----
 
     ----- stderr -----
-    warning: `uv tool uninstall` is experimental and may change without warning.
-    Removed dangling environment for tool: `black` (missing receipt)
+    warning: `uv tool uninstall` is experimental and may change without warning
+    Removed dangling environment for `black`
+    "###);
+}
+
+#[test]
+fn tool_uninstall_all_missing_receipt() {
+    let context = TestContext::new("3.12").with_filtered_exe_suffix();
+    let tool_dir = context.temp_dir.child("tools");
+    let bin_dir = context.temp_dir.child("bin");
+
+    // Install `black`
+    context
+        .tool_install()
+        .arg("black==24.2.0")
+        .env("UV_TOOL_DIR", tool_dir.as_os_str())
+        .env("XDG_BIN_HOME", bin_dir.as_os_str())
+        .assert()
+        .success();
+
+    fs_err::remove_file(tool_dir.join("black").join("uv-receipt.toml")).unwrap();
+
+    uv_snapshot!(context.filters(), context.tool_uninstall().arg("--all")
+        .env("UV_TOOL_DIR", tool_dir.as_os_str())
+        .env("XDG_BIN_HOME", bin_dir.as_os_str()), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+
+    ----- stderr -----
+    warning: `uv tool uninstall` is experimental and may change without warning
+    Removed dangling environment for `black`
     "###);
 }

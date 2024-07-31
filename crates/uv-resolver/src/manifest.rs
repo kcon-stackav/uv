@@ -1,4 +1,5 @@
 use either::Either;
+use std::borrow::Cow;
 
 use pep508_rs::MarkerEnvironment;
 use pypi_types::Requirement;
@@ -97,7 +98,7 @@ impl Manifest {
         &'a self,
         markers: Option<&'a MarkerEnvironment>,
         mode: DependencyMode,
-    ) -> impl Iterator<Item = &Requirement> + 'a {
+    ) -> impl Iterator<Item = Cow<'a, Requirement>> + 'a {
         self.requirements_no_overrides(markers, mode)
             .chain(self.overrides(markers, mode))
     }
@@ -107,7 +108,7 @@ impl Manifest {
         &'a self,
         markers: Option<&'a MarkerEnvironment>,
         mode: DependencyMode,
-    ) -> impl Iterator<Item = &Requirement> + 'a {
+    ) -> impl Iterator<Item = Cow<'a, Requirement>> + 'a {
         match mode {
             // Include all direct and transitive requirements, with constraints and overrides applied.
             DependencyMode::Transitive => Either::Left(
@@ -128,14 +129,15 @@ impl Manifest {
                     .chain(
                         self.constraints
                             .requirements()
-                            .filter(move |requirement| requirement.evaluate_markers(markers, &[])),
+                            .filter(move |requirement| requirement.evaluate_markers(markers, &[]))
+                            .map(Cow::Borrowed),
                     ),
             ),
             // Include direct requirements, with constraints and overrides applied.
             DependencyMode::Direct => Either::Right(
                 self.overrides
                     .apply(&self.requirements)
-                    .chain(self.constraints.requirements())
+                    .chain(self.constraints.requirements().map(Cow::Borrowed))
                     .filter(move |requirement| requirement.evaluate_markers(markers, &[])),
             ),
         }
@@ -146,19 +148,21 @@ impl Manifest {
         &'a self,
         markers: Option<&'a MarkerEnvironment>,
         mode: DependencyMode,
-    ) -> impl Iterator<Item = &Requirement> + 'a {
+    ) -> impl Iterator<Item = Cow<'a, Requirement>> + 'a {
         match mode {
             // Include all direct and transitive requirements, with constraints and overrides applied.
             DependencyMode::Transitive => Either::Left(
                 self.overrides
                     .requirements()
-                    .filter(move |requirement| requirement.evaluate_markers(markers, &[])),
+                    .filter(move |requirement| requirement.evaluate_markers(markers, &[]))
+                    .map(Cow::Borrowed),
             ),
             // Include direct requirements, with constraints and overrides applied.
             DependencyMode::Direct => Either::Right(
                 self.overrides
                     .requirements()
-                    .filter(move |requirement| requirement.evaluate_markers(markers, &[])),
+                    .filter(move |requirement| requirement.evaluate_markers(markers, &[]))
+                    .map(Cow::Borrowed),
             ),
         }
     }
@@ -177,7 +181,7 @@ impl Manifest {
         &'a self,
         markers: Option<&'a MarkerEnvironment>,
         mode: DependencyMode,
-    ) -> impl Iterator<Item = &PackageName> + 'a {
+    ) -> impl Iterator<Item = Cow<'a, Requirement>> + 'a {
         match mode {
             // Include direct requirements, dependencies of editables, and transitive dependencies
             // of local packages.
@@ -196,18 +200,30 @@ impl Manifest {
                         self.overrides
                             .apply(&self.requirements)
                             .filter(move |requirement| requirement.evaluate_markers(markers, &[])),
-                    )
-                    .map(|requirement| &requirement.name),
+                    ),
             ),
 
             // Restrict to the direct requirements.
             DependencyMode::Direct => Either::Right(
                 self.overrides
                     .apply(self.requirements.iter())
-                    .filter(move |requirement| requirement.evaluate_markers(markers, &[]))
-                    .map(|requirement| &requirement.name),
+                    .filter(move |requirement| requirement.evaluate_markers(markers, &[])),
             ),
         }
+    }
+
+    /// Returns an iterator over the direct requirements, with overrides applied.
+    ///
+    /// At time of writing, this is used for:
+    /// - Determining which packages should have development dependencies included in the
+    ///   resolution (assuming the user enabled development dependencies).
+    pub fn direct_requirements<'a>(
+        &'a self,
+        markers: Option<&'a MarkerEnvironment>,
+    ) -> impl Iterator<Item = Cow<'a, Requirement>> + 'a {
+        self.overrides
+            .apply(self.requirements.iter())
+            .filter(move |requirement| requirement.evaluate_markers(markers, &[]))
     }
 
     /// Apply the overrides and constraints to a set of requirements.
@@ -217,7 +233,7 @@ impl Manifest {
     pub fn apply<'a>(
         &'a self,
         requirements: impl IntoIterator<Item = &'a Requirement>,
-    ) -> impl Iterator<Item = &Requirement> {
+    ) -> impl Iterator<Item = Cow<'a, Requirement>> {
         self.constraints.apply(self.overrides.apply(requirements))
     }
 

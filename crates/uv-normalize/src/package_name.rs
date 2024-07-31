@@ -13,12 +13,13 @@ use crate::{validate_and_normalize_owned, validate_and_normalize_ref, InvalidNam
 /// See: <https://packaging.python.org/en/latest/specifications/name-normalization/>
 #[derive(
     Debug,
+    Default,
     Clone,
     PartialEq,
     Eq,
-    Hash,
     PartialOrd,
     Ord,
+    Hash,
     Serialize,
     rkyv::Archive,
     rkyv::Deserialize,
@@ -58,6 +59,11 @@ impl PackageName {
         } else {
             Cow::Borrowed(self.0.as_str())
         }
+    }
+
+    /// Returns the underlying package name.
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 

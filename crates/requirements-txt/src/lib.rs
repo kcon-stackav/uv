@@ -45,15 +45,13 @@ use unscanny::{Pattern, Scanner};
 use url::Url;
 
 use distribution_types::{UnresolvedRequirement, UnresolvedRequirementSpecification};
-use pep508_rs::{
-    expand_env_vars, split_scheme, strip_host, Pep508Error, RequirementOrigin, Scheme, VerbatimUrl,
-};
+use pep508_rs::{expand_env_vars, Pep508Error, RequirementOrigin, VerbatimUrl};
 use pypi_types::{Requirement, VerbatimParsedUrl};
 #[cfg(feature = "http")]
 use uv_client::BaseClient;
 use uv_client::BaseClientBuilder;
 use uv_configuration::{NoBinary, NoBuild, PackageNameSpecifier};
-use uv_fs::{normalize_url_path, Simplified};
+use uv_fs::Simplified;
 use uv_warnings::warn_user;
 
 use crate::requirement::EditableError;
@@ -84,80 +82,13 @@ enum RequirementsTxtStatement {
     /// `--extra-index-url`
     ExtraIndexUrl(VerbatimUrl),
     /// `--find-links`
-    FindLinks(FindLink),
+    FindLinks(VerbatimUrl),
     /// `--no-index`
     NoIndex,
     /// `--no-binary`
     NoBinary(NoBinary),
     /// `--only-binary`
     OnlyBinary(NoBuild),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FindLink {
-    Path(PathBuf),
-    Url(Url),
-}
-
-impl FindLink {
-    /// Parse a raw string for a `--find-links` entry, which could be a URL or a local path.
-    ///
-    /// For example:
-    /// - `file:///home/ferris/project/scripts/...`
-    /// - `file:../ferris/`
-    /// - `../ferris/`
-    /// - `https://download.pytorch.org/whl/torch_stable.html`
-    pub fn parse(given: &str, working_dir: impl AsRef<Path>) -> Result<Self, url::ParseError> {
-        // Expand environment variables.
-        let expanded = expand_env_vars(given);
-
-        if let Some((scheme, path)) = split_scheme(&expanded) {
-            match Scheme::parse(scheme) {
-                // Ex) `file:///home/ferris/project/scripts/...`, `file://localhost/home/ferris/project/scripts/...`, or `file:../ferris/`
-                Some(Scheme::File) => {
-                    // Strip the leading slashes, along with the `localhost` host, if present.
-                    let path = strip_host(path);
-
-                    // Transform, e.g., `/C:/Users/ferris/wheel-0.42.0.tar.gz` to `C:\Users\ferris\wheel-0.42.0.tar.gz`.
-                    let path = normalize_url_path(path);
-
-                    let path = PathBuf::from(path.as_ref());
-                    let path = if path.is_absolute() {
-                        path
-                    } else {
-                        working_dir.as_ref().join(path)
-                    };
-                    Ok(Self::Path(path))
-                }
-
-                // Ex) `https://download.pytorch.org/whl/torch_stable.html`
-                Some(_) => {
-                    let url = Url::parse(&expanded)?;
-                    Ok(Self::Url(url))
-                }
-
-                // Ex) `C:/Users/ferris/wheel-0.42.0.tar.gz`
-                _ => {
-                    let path = PathBuf::from(expanded.as_ref());
-                    let path = if path.is_absolute() {
-                        path
-                    } else {
-                        working_dir.as_ref().join(path)
-                    };
-                    Ok(Self::Path(path))
-                }
-            }
-        } else {
-            // Ex) `../ferris/`
-            let path = PathBuf::from(expanded.as_ref());
-            let path = if path.is_absolute() {
-                path
-            } else {
-                working_dir.as_ref().join(path)
-            };
-            Ok(Self::Path(path))
-        }
-    }
 }
 
 /// A [Requirement] with additional metadata from the `requirements.txt`, currently only hashes but in
@@ -212,7 +143,7 @@ pub struct RequirementsTxt {
     /// The extra index URLs, specified with `--extra-index-url`.
     pub extra_index_urls: Vec<VerbatimUrl>,
     /// The find links locations, specified with `--find-links`.
-    pub find_links: Vec<FindLink>,
+    pub find_links: Vec<VerbatimUrl>,
     /// Whether to ignore the index, specified with `--no-index`.
     pub no_index: bool,
     /// Whether to disallow wheels, specified with `--no-binary`.
@@ -238,7 +169,7 @@ impl RequirementsTxt {
                 {
                     return Err(RequirementsTxtFileError {
                         file: requirements_txt.to_path_buf(),
-                        error: RequirementsTxtParserError::IO(io::Error::new(
+                        error: RequirementsTxtParserError::Io(io::Error::new(
                             io::ErrorKind::InvalidInput,
                             "Remote file not supported without `http` feature",
                         )),
@@ -251,7 +182,7 @@ impl RequirementsTxt {
                     if client_builder.is_offline() {
                         return Err(RequirementsTxtFileError {
                             file: requirements_txt.to_path_buf(),
-                            error: RequirementsTxtParserError::IO(io::Error::new(
+                            error: RequirementsTxtParserError::Io(io::Error::new(
                                 io::ErrorKind::InvalidInput,
                                 format!("Network connectivity is disabled, but a remote requirements file was requested: {}", requirements_txt.display()),
                             )),
@@ -265,7 +196,7 @@ impl RequirementsTxt {
                 // Ex) `file:///home/ferris/project/requirements.txt`
                 uv_fs::read_to_string_transcode(&requirements_txt)
                     .await
-                    .map_err(RequirementsTxtParserError::IO)
+                    .map_err(RequirementsTxtParserError::Io)
             }
             .map_err(|err| RequirementsTxtFileError {
                 file: requirements_txt.to_path_buf(),
@@ -445,8 +376,8 @@ impl RequirementsTxt {
                 RequirementsTxtStatement::ExtraIndexUrl(url) => {
                     data.extra_index_urls.push(url);
                 }
-                RequirementsTxtStatement::FindLinks(path_or_url) => {
-                    data.find_links.push(path_or_url);
+                RequirementsTxtStatement::FindLinks(url) => {
+                    data.find_links.push(url);
                 }
                 RequirementsTxtStatement::NoIndex => {
                     data.no_index = true;
@@ -592,16 +523,26 @@ fn parse_entry(
     } else if s.eat_if("--no-index") {
         RequirementsTxtStatement::NoIndex
     } else if s.eat_if("--find-links") || s.eat_if("-f") {
-        let path_or_url = parse_value(content, s, |c: char| !['\n', '\r', '#'].contains(&c))?;
-        let path_or_url = FindLink::parse(path_or_url, working_dir).map_err(|err| {
-            RequirementsTxtParserError::Url {
+        let given = parse_value(content, s, |c: char| !['\n', '\r', '#'].contains(&c))?;
+        let expanded = expand_env_vars(given);
+        let url = if let Ok(path) = Path::new(expanded.as_ref()).canonicalize() {
+            VerbatimUrl::from_path(path).map_err(|err| RequirementsTxtParserError::VerbatimUrl {
                 source: err,
-                url: path_or_url.to_string(),
+                url: given.to_string(),
                 start,
                 end: s.cursor(),
-            }
-        })?;
-        RequirementsTxtStatement::FindLinks(path_or_url)
+            })?
+        } else {
+            VerbatimUrl::parse_url(expanded.as_ref()).map_err(|err| {
+                RequirementsTxtParserError::Url {
+                    source: err,
+                    url: given.to_string(),
+                    start,
+                    end: s.cursor(),
+                }
+            })?
+        };
+        RequirementsTxtStatement::FindLinks(url.with_given(given))
     } else if s.eat_if("--no-binary") {
         let given = parse_value(content, s, |c: char| !['\n', '\r', '#'].contains(&c))?;
         let specifier = PackageNameSpecifier::from_str(given).map_err(|err| {
@@ -859,7 +800,7 @@ pub struct RequirementsTxtFileError {
 /// Error parsing requirements.txt, error disambiguation
 #[derive(Debug)]
 pub enum RequirementsTxtParserError {
-    IO(io::Error),
+    Io(io::Error),
     Url {
         source: url::ParseError,
         url: String,
@@ -936,7 +877,7 @@ pub enum RequirementsTxtParserError {
 impl Display for RequirementsTxtParserError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::IO(err) => err.fmt(f),
+            Self::Io(err) => err.fmt(f),
             Self::Url { url, start, .. } => {
                 write!(f, "Invalid URL at position {start}: `{url}`")
             }
@@ -1004,7 +945,7 @@ impl Display for RequirementsTxtParserError {
 impl std::error::Error for RequirementsTxtParserError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self {
-            Self::IO(err) => err.source(),
+            Self::Io(err) => err.source(),
             Self::Url { source, .. } => Some(source),
             Self::FileUrl { .. } => None,
             Self::VerbatimUrl { source, .. } => Some(source),
@@ -1030,7 +971,7 @@ impl std::error::Error for RequirementsTxtParserError {
 impl Display for RequirementsTxtFileError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.error {
-            RequirementsTxtParserError::IO(err) => err.fmt(f),
+            RequirementsTxtParserError::Io(err) => err.fmt(f),
             RequirementsTxtParserError::Url { url, start, .. } => {
                 write!(
                     f,
@@ -1167,7 +1108,7 @@ impl std::error::Error for RequirementsTxtFileError {
 
 impl From<io::Error> for RequirementsTxtParserError {
     fn from(err: io::Error) -> Self {
-        Self::IO(err)
+        Self::Io(err)
     }
 }
 

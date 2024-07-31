@@ -21,7 +21,7 @@ use uv_distribution::{
 };
 use uv_fs::Simplified;
 use uv_git::GitUrl;
-use uv_toolchain::PythonEnvironment;
+use uv_python::PythonEnvironment;
 use uv_types::HashStrategy;
 
 use crate::satisfies::RequirementSatisfaction;
@@ -122,9 +122,6 @@ impl<'a> Planner<'a> {
                             }
                             RequirementSatisfaction::OutOfDate => {
                                 debug!("Requirement installed, but not fresh: {distribution}");
-                            }
-                            RequirementSatisfaction::Dynamic => {
-                                debug!("Requirement installed, but dynamic: {distribution}");
                             }
                         }
                         reinstalls.push(distribution.clone());
@@ -290,7 +287,11 @@ impl<'a> Planner<'a> {
                     // Find the most-compatible wheel from the cache, since we don't know
                     // the filename in advance.
                     if let Some(wheel) = built_index.directory(&sdist)? {
-                        let cached_dist = wheel.into_url_dist(url.clone());
+                        let cached_dist = if *editable {
+                            wheel.into_editable(url.clone())
+                        } else {
+                            wheel.into_url_dist(url.clone())
+                        };
                         debug!("Directory source requirement already cached: {cached_dist}");
                         cached.push(CachedDist::Url(cached_dist));
                         continue;

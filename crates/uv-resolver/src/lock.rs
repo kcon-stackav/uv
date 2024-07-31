@@ -1,25 +1,30 @@
+#![allow(clippy::default_trait_access)]
+
 use std::borrow::Cow;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::convert::Infallible;
 use std::fmt::{Debug, Display};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use either::Either;
-use path_slash::PathExt;
+use itertools::Itertools;
 use petgraph::visit::EdgeRef;
 use rustc_hash::{FxHashMap, FxHashSet};
-use serde::{Deserialize, Deserializer};
 use toml_edit::{value, Array, ArrayOfTables, InlineTable, Item, Table, Value};
 use url::Url;
 
 use cache_key::RepositoryUrl;
 use distribution_filename::WheelFilename;
 use distribution_types::{
-    BuiltDist, DirectUrlBuiltDist, DirectUrlSourceDist, DirectorySourceDist, Dist, FileLocation,
-    GitSourceDist, IndexUrl, PathBuiltDist, PathSourceDist, RegistryBuiltDist, RegistryBuiltWheel,
-    RegistrySourceDist, RemoteSource, Resolution, ResolvedDist, ToUrlError,
+    BuiltDist, DirectUrlBuiltDist, DirectUrlSourceDist, DirectorySourceDist, Dist,
+    DistributionMetadata, FileLocation, GitSourceDist, HashComparison, IndexUrl, Name,
+    PathBuiltDist, PathSourceDist, PrioritizedDist, RegistryBuiltDist, RegistryBuiltWheel,
+    RegistrySourceDist, RemoteSource, Resolution, ResolvedDist, SourceDistCompatibility,
+    ToUrlError, UrlString, VersionId, WheelCompatibility,
 };
-use pep440_rs::{Version, VersionSpecifiers};
+use pep440_rs::{Version, VersionSpecifier};
 use pep508_rs::{
     ExtraOperator, MarkerEnvironment, MarkerExpression, MarkerTree, VerbatimUrl, VerbatimUrlError,
 };
@@ -27,24 +32,41 @@ use platform_tags::{TagCompatibility, TagPriority, Tags};
 use pypi_types::{
     HashDigest, ParsedArchiveUrl, ParsedGitUrl, ParsedUrl, Requirement, RequirementSource,
 };
-use uv_configuration::ExtrasSpecification;
-use uv_distribution::{Metadata, VirtualProject};
+use uv_configuration::{ExtrasSpecification, Upgrade};
+use uv_distribution::{ArchiveMetadata, Metadata};
+use uv_fs::{PortablePath, PortablePathBuf};
 use uv_git::{GitReference, GitSha, RepositoryReference, ResolvedRepositoryReference};
 use uv_normalize::{ExtraName, GroupName, PackageName};
+use uv_workspace::VirtualProject;
 
 use crate::resolution::{AnnotatedDist, ResolutionGraphNode};
-use crate::{RequiresPython, ResolutionGraph};
+use crate::resolver::FxOnceMap;
+use crate::{
+    ExcludeNewer, InMemoryIndex, MetadataResponse, PreReleaseMode, RequiresPython, ResolutionGraph,
+    ResolutionMode, VersionMap, VersionsResponse,
+};
 
-/// The current version of the lock file format.
+/// The current version of the lockfile format.
 const VERSION: u32 = 1;
 
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize, PartialEq, Eq)]
 #[serde(try_from = "LockWire")]
 pub struct Lock {
     version: u32,
-    distributions: Vec<Distribution>,
+    /// If this lockfile was built from a forking resolution with non-identical forks, store the
+    /// forks in the lockfile so we can recreate them in subsequent resolutions.
+    #[serde(rename = "environment-markers")]
+    fork_markers: Option<BTreeSet<MarkerTree>>,
     /// The range of supported Python versions.
     requires_python: Option<RequiresPython>,
+    /// The [`ResolutionMode`] used to generate this lock.
+    resolution_mode: ResolutionMode,
+    /// The [`PreReleaseMode`] used to generate this lock.
+    prerelease_mode: PreReleaseMode,
+    /// The [`ExcludeNewer`] used to generate this lock.
+    exclude_newer: Option<ExcludeNewer>,
+    /// The actual locked version and their metadata.
+    distributions: Vec<Distribution>,
     /// A map from distribution ID to index in `distributions`.
     ///
     /// This can be used to quickly lookup the full distribution for any ID
@@ -55,7 +77,7 @@ pub struct Lock {
     /// It is guaranteed that every distribution in this lock has an entry in
     /// this map, and that every dependency for every distribution has an ID
     /// that exists in this map. That is, there are no dependencies that don't
-    /// have a corresponding locked distribution entry in the same lock file.
+    /// have a corresponding locked distribution entry in the same lockfile.
     by_id: FxHashMap<DistributionId, usize>,
 }
 
@@ -70,7 +92,12 @@ impl Lock {
                 continue;
             };
             if dist.is_base() {
-                let mut locked_dist = Distribution::from_annotated_dist(dist)?;
+                let fork_markers = graph
+                    .fork_markers(dist.name(), &dist.version, dist.dist.version_or_url().url())
+                    .cloned();
+                let mut locked_dist = Distribution::from_annotated_dist(dist, fork_markers)?;
+
+                // Add all dependencies
                 for edge in graph.petgraph.edges(node_index) {
                     let ResolutionGraphNode::Dist(dependency_dist) = &graph.petgraph[edge.target()]
                     else {
@@ -134,7 +161,16 @@ impl Lock {
 
         let distributions = locked_dists.into_values().collect();
         let requires_python = graph.requires_python.clone();
-        let lock = Self::new(VERSION, distributions, requires_python)?;
+        let options = graph.options;
+        let lock = Self::new(
+            VERSION,
+            distributions,
+            requires_python,
+            options.resolution_mode,
+            options.prerelease_mode,
+            options.exclude_newer,
+            graph.fork_markers.clone(),
+        )?;
         Ok(lock)
     }
 
@@ -143,6 +179,10 @@ impl Lock {
         version: u32,
         mut distributions: Vec<Distribution>,
         requires_python: Option<RequiresPython>,
+        resolution_mode: ResolutionMode,
+        prerelease_mode: PreReleaseMode,
+        exclude_newer: Option<ExcludeNewer>,
+        fork_markers: Option<BTreeSet<MarkerTree>>,
     ) -> Result<Self, LockError> {
         // Put all dependencies for each distribution in a canonical order and
         // check for duplicates.
@@ -190,6 +230,13 @@ impl Lock {
                     }
                 }
             }
+
+            // Remove wheels that don't match `requires-python` and can't be selected for
+            // installation.
+            if let Some(requires_python) = &requires_python {
+                dist.wheels
+                    .retain(|wheel| requires_python.matches_wheel_tag(&wheel.filename));
+            }
         }
         distributions.sort_by(|dist1, dist2| dist1.id.cmp(&dist2.id));
 
@@ -218,31 +265,16 @@ impl Lock {
 
         // Remove any non-existent extras (e.g., extras that were requested but don't exist).
         for dist in &mut distributions {
-            dist.dependencies.retain(|dep| {
-                dep.extra.as_ref().map_or(true, |extra| {
+            for dep in dist
+                .dependencies
+                .iter_mut()
+                .chain(dist.optional_dependencies.values_mut().flatten())
+                .chain(dist.dev_dependencies.values_mut().flatten())
+            {
+                dep.extra.retain(|extra| {
                     extras_by_id
                         .get(&dep.distribution_id)
                         .is_some_and(|extras| extras.contains(extra))
-                })
-            });
-
-            for dependencies in dist.optional_dependencies.values_mut() {
-                dependencies.retain(|dep| {
-                    dep.extra.as_ref().map_or(true, |extra| {
-                        extras_by_id
-                            .get(&dep.distribution_id)
-                            .is_some_and(|extras| extras.contains(extra))
-                    })
-                });
-            }
-
-            for dependencies in dist.dev_dependencies.values_mut() {
-                dependencies.retain(|dep| {
-                    dep.extra.as_ref().map_or(true, |extra| {
-                        extras_by_id
-                            .get(&dep.distribution_id)
-                            .is_some_and(|extras| extras.contains(extra))
-                    })
                 });
             }
         }
@@ -289,22 +321,27 @@ impl Lock {
 
             // Also check that our sources are consistent with whether we have
             // hashes or not.
-            let requires_hash = dist.id.source.requires_hash();
-            for wheel in &dist.wheels {
-                if requires_hash != wheel.hash.is_some() {
-                    return Err(LockErrorKind::Hash {
-                        id: dist.id.clone(),
-                        artifact_type: "wheel",
-                        expected: requires_hash,
+            if let Some(requires_hash) = dist.id.source.requires_hash() {
+                for wheel in &dist.wheels {
+                    if requires_hash != wheel.hash.is_some() {
+                        return Err(LockErrorKind::Hash {
+                            id: dist.id.clone(),
+                            artifact_type: "wheel",
+                            expected: requires_hash,
+                        }
+                        .into());
                     }
-                    .into());
                 }
             }
         }
-        Ok(Lock {
+        Ok(Self {
             version,
-            distributions,
+            fork_markers,
             requires_python,
+            resolution_mode,
+            prerelease_mode,
+            exclude_newer,
+            distributions,
             by_id,
         })
     }
@@ -314,9 +351,35 @@ impl Lock {
         &self.distributions
     }
 
+    /// Returns the owned [`Distribution`] entries in this lock.
+    pub fn into_distributions(self) -> Vec<Distribution> {
+        self.distributions
+    }
+
     /// Returns the supported Python version range for the lockfile, if present.
     pub fn requires_python(&self) -> Option<&RequiresPython> {
         self.requires_python.as_ref()
+    }
+
+    /// Returns the resolution mode used to generate this lock.
+    pub fn resolution_mode(&self) -> ResolutionMode {
+        self.resolution_mode
+    }
+
+    /// Returns the pre-release mode used to generate this lock.
+    pub fn prerelease_mode(&self) -> PreReleaseMode {
+        self.prerelease_mode
+    }
+
+    /// Returns the exclude newer setting used to generate this lock.
+    pub fn exclude_newer(&self) -> Option<ExcludeNewer> {
+        self.exclude_newer
+    }
+
+    /// If this lockfile was built from a forking resolution with non-identical forks, return the
+    /// markers of those forks, otherwise `None`.
+    pub fn fork_markers(&self) -> &Option<BTreeSet<MarkerTree>> {
+        &self.fork_markers
     }
 
     /// Convert the [`Lock`] to a [`Resolution`] using the given marker environment, tags, and root.
@@ -358,6 +421,7 @@ impl Lock {
         }
 
         let mut map = BTreeMap::default();
+        let mut hashes = BTreeMap::default();
         while let Some((dist, extra)) = queue.pop_front() {
             let deps =
                 if let Some(extra) = extra {
@@ -375,23 +439,28 @@ impl Lock {
                     .as_ref()
                     .map_or(true, |marker| marker.evaluate(marker_env, &[]))
                 {
-                    if seen.insert((&dep.distribution_id, dep.extra.as_ref())) {
-                        let dep_dist = self.find_by_id(&dep.distribution_id);
-                        let dep_extra = dep.extra.as_ref();
-                        queue.push_back((dep_dist, dep_extra));
+                    let dep_dist = self.find_by_id(&dep.distribution_id);
+                    if seen.insert((&dep.distribution_id, None)) {
+                        queue.push_back((dep_dist, None));
+                    }
+                    for extra in &dep.extra {
+                        if seen.insert((&dep.distribution_id, Some(extra))) {
+                            queue.push_back((dep_dist, Some(extra)));
+                        }
                     }
                 }
             }
-            let name = dist.id.name.clone();
-            let resolved_dist =
-                ResolvedDist::Installable(dist.to_dist(project.workspace().root(), tags)?);
-            map.insert(name, resolved_dist);
+            map.insert(
+                dist.id.name.clone(),
+                ResolvedDist::Installable(dist.to_dist(project.workspace().install_path(), tags)?),
+            );
+            hashes.insert(dist.id.name.clone(), dist.hashes());
         }
         let diagnostics = vec![];
-        Ok(Resolution::new(map, diagnostics))
+        Ok(Resolution::new(map, hashes, diagnostics))
     }
 
-    /// Returns the TOML representation of this lock file.
+    /// Returns the TOML representation of this lockfile.
     pub fn to_toml(&self) -> anyhow::Result<String> {
         // We construct a TOML document manually instead of going through Serde to enable
         // the use of inline tables.
@@ -400,6 +469,24 @@ impl Lock {
 
         if let Some(ref requires_python) = self.requires_python {
             doc.insert("requires-python", value(requires_python.to_string()));
+        }
+        if let Some(ref fork_markers) = self.fork_markers {
+            let fork_markers =
+                each_element_on_its_line_array(fork_markers.iter().map(ToString::to_string));
+            doc.insert("environment-markers", value(fork_markers));
+        }
+
+        // Write the settings that were used to generate the resolution.
+        // This enables us to invalidate the lockfile if the user changes
+        // their settings.
+        if self.resolution_mode != ResolutionMode::default() {
+            doc.insert("resolution-mode", value(self.resolution_mode.to_string()));
+        }
+        if self.prerelease_mode != PreReleaseMode::default() {
+            doc.insert("prerelease-mode", value(self.prerelease_mode.to_string()));
+        }
+        if let Some(exclude_newer) = self.exclude_newer {
+            doc.insert("exclude-newer", value(exclude_newer.to_string()));
         }
 
         // Count the number of distributions for each package name. When
@@ -444,27 +531,100 @@ impl Lock {
             .expect("valid index for distribution");
         dist
     }
+
+    /// Convert the [`Lock`] to a [`InMemoryIndex`] that can be used for resolution.
+    ///
+    /// Any packages specified to be upgraded will be ignored.
+    pub fn to_index(
+        &self,
+        install_path: &Path,
+        upgrade: &Upgrade,
+    ) -> Result<InMemoryIndex, LockError> {
+        let distributions =
+            FxOnceMap::with_capacity_and_hasher(self.distributions.len(), Default::default());
+        let mut packages: FxHashMap<_, BTreeMap<Version, PrioritizedDist>> =
+            FxHashMap::with_capacity_and_hasher(self.distributions.len(), Default::default());
+
+        for distribution in &self.distributions {
+            // Skip packages that may be upgraded from their pinned version.
+            if upgrade.contains(distribution.name()) {
+                continue;
+            }
+
+            match distribution.id.source {
+                Source::Registry(..) | Source::Git(..) => {}
+                // Skip local and direct URL dependencies, as their metadata may have been mutated
+                // without a version change.
+                Source::Path(..)
+                | Source::Directory(..)
+                | Source::Editable(..)
+                | Source::Direct(..) => continue,
+            }
+
+            // Add registry distributions to the package index.
+            if let Some(prioritized_dist) = distribution.to_prioritized_dist(install_path)? {
+                packages
+                    .entry(distribution.name().clone())
+                    .or_default()
+                    .insert(distribution.id.version.clone(), prioritized_dist);
+            }
+
+            // Extract the distribution metadata.
+            let version_id = distribution.version_id(install_path)?;
+            let hashes = distribution.hashes();
+            let metadata = distribution.to_metadata(install_path)?;
+
+            // Add metadata to the distributions index.
+            let response = MetadataResponse::Found(ArchiveMetadata::with_hashes(metadata, hashes));
+            distributions.done(version_id, Arc::new(response));
+        }
+
+        let packages = packages
+            .into_iter()
+            .map(|(name, versions)| {
+                let response = VersionsResponse::Found(vec![VersionMap::from(versions)]);
+                (name, Arc::new(response))
+            })
+            .collect();
+
+        Ok(InMemoryIndex::with(packages, distributions))
+    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 struct LockWire {
     version: u32,
-    #[serde(rename = "distribution")]
-    distributions: Vec<DistributionWire>,
-    #[serde(rename = "requires-python")]
+    #[serde(default)]
     requires_python: Option<RequiresPython>,
+    /// If this lockfile was built from a forking resolution with non-identical forks, store the
+    /// forks in the lockfile so we can recreate them in subsequent resolutions.
+    #[serde(rename = "environment-markers")]
+    fork_markers: Option<BTreeSet<MarkerTree>>,
+    #[serde(default)]
+    resolution_mode: ResolutionMode,
+    #[serde(default)]
+    prerelease_mode: PreReleaseMode,
+    #[serde(default)]
+    exclude_newer: Option<ExcludeNewer>,
+    #[serde(rename = "distribution", default)]
+    distributions: Vec<DistributionWire>,
 }
 
 impl From<Lock> for LockWire {
     fn from(lock: Lock) -> LockWire {
         LockWire {
             version: lock.version,
+            requires_python: lock.requires_python,
+            fork_markers: lock.fork_markers,
+            resolution_mode: lock.resolution_mode,
+            prerelease_mode: lock.prerelease_mode,
+            exclude_newer: lock.exclude_newer,
             distributions: lock
                 .distributions
                 .into_iter()
                 .map(DistributionWire::from)
                 .collect(),
-            requires_python: lock.requires_python,
         }
     }
 }
@@ -495,22 +655,39 @@ impl TryFrom<LockWire> for Lock {
             .into_iter()
             .map(|dist| dist.unwire(&unambiguous_dist_ids))
             .collect::<Result<Vec<_>, _>>()?;
-        Lock::new(wire.version, distributions, wire.requires_python)
+        Lock::new(
+            wire.version,
+            distributions,
+            wire.requires_python,
+            wire.resolution_mode,
+            wire.prerelease_mode,
+            wire.exclude_newer,
+            wire.fork_markers,
+        )
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Distribution {
     pub(crate) id: DistributionId,
     sdist: Option<SourceDist>,
     wheels: Vec<Wheel>,
+    /// If there are multiple distributions for the same package name, we add the markers of the
+    /// fork(s) that contained this distribution, so we can set the correct preferences in the next
+    /// resolution.
+    ///
+    /// Named `environment-markers` in `uv.lock`.
+    fork_markers: Option<BTreeSet<MarkerTree>>,
     dependencies: Vec<Dependency>,
     optional_dependencies: BTreeMap<ExtraName, Vec<Dependency>>,
     dev_dependencies: BTreeMap<GroupName, Vec<Dependency>>,
 }
 
 impl Distribution {
-    fn from_annotated_dist(annotated_dist: &AnnotatedDist) -> Result<Self, LockError> {
+    fn from_annotated_dist(
+        annotated_dist: &AnnotatedDist,
+        fork_markers: Option<BTreeSet<MarkerTree>>,
+    ) -> Result<Self, LockError> {
         let id = DistributionId::from_annotated_dist(annotated_dist);
         let sdist = SourceDist::from_annotated_dist(&id, annotated_dist)?;
         let wheels = Wheel::from_annotated_dist(annotated_dist)?;
@@ -518,6 +695,7 @@ impl Distribution {
             id,
             sdist,
             wheels,
+            fork_markers,
             dependencies: vec![],
             optional_dependencies: BTreeMap::default(),
             dev_dependencies: BTreeMap::default(),
@@ -526,8 +704,16 @@ impl Distribution {
 
     /// Add the [`AnnotatedDist`] as a dependency of the [`Distribution`].
     fn add_dependency(&mut self, annotated_dist: &AnnotatedDist, marker: Option<&MarkerTree>) {
-        self.dependencies
-            .push(Dependency::from_annotated_dist(annotated_dist, marker));
+        let new_dep = Dependency::from_annotated_dist(annotated_dist, marker);
+        for existing_dep in &mut self.dependencies {
+            if existing_dep.distribution_id == new_dep.distribution_id
+                && existing_dep.marker == new_dep.marker
+            {
+                existing_dep.extra.extend(new_dep.extra);
+                return;
+            }
+        }
+        self.dependencies.push(new_dep);
     }
 
     /// Add the [`AnnotatedDist`] as an optional dependency of the [`Distribution`].
@@ -615,7 +801,25 @@ impl Distribution {
             };
         }
 
-        match &self.id.source {
+        if let Some(sdist) = self.to_source_dist(workspace_root)? {
+            return Ok(Dist::Source(sdist));
+        }
+
+        Err(LockErrorKind::NeitherSourceDistNorWheel {
+            id: self.id.clone(),
+        }
+        .into())
+    }
+
+    /// Convert the source of this [`Distribution`] to a [`SourceDist`] that can be used in installation.
+    ///
+    /// Returns `Ok(None)` if the source cannot be converted because `self.sdist` is `None`. This is required
+    /// for registry sources.
+    fn to_source_dist(
+        &self,
+        workspace_root: &Path,
+    ) -> Result<Option<distribution_types::SourceDist>, LockError> {
+        let sdist = match &self.id.source {
             Source::Path(path) => {
                 let path_dist = PathSourceDist {
                     name: self.id.name.clone(),
@@ -623,8 +827,7 @@ impl Distribution {
                     install_path: workspace_root.join(path),
                     lock_path: path.clone(),
                 };
-                let source_dist = distribution_types::SourceDist::Path(path_dist);
-                return Ok(Dist::Source(source_dist));
+                distribution_types::SourceDist::Path(path_dist)
             }
             Source::Directory(path) => {
                 let dir_dist = DirectorySourceDist {
@@ -634,8 +837,7 @@ impl Distribution {
                     lock_path: path.clone(),
                     editable: false,
                 };
-                let source_dist = distribution_types::SourceDist::Directory(dir_dist);
-                return Ok(Dist::Source(source_dist));
+                distribution_types::SourceDist::Directory(dir_dist)
             }
             Source::Editable(path) => {
                 let dir_dist = DirectorySourceDist {
@@ -645,8 +847,7 @@ impl Distribution {
                     lock_path: path.clone(),
                     editable: true,
                 };
-                let source_dist = distribution_types::SourceDist::Directory(dir_dist);
-                return Ok(Dist::Source(source_dist));
+                distribution_types::SourceDist::Directory(dir_dist)
             }
             Source::Git(url, git) => {
                 // Reconstruct the `GitUrl` from the `GitSource`.
@@ -666,8 +867,7 @@ impl Distribution {
                     git: Box::new(git_url),
                     subdirectory: git.subdirectory.as_ref().map(PathBuf::from),
                 };
-                let source_dist = distribution_types::SourceDist::Git(git_dist);
-                return Ok(Dist::Source(source_dist));
+                distribution_types::SourceDist::Git(git_dist)
             }
             Source::Direct(url, direct) => {
                 let url = Url::from(ParsedArchiveUrl {
@@ -680,52 +880,92 @@ impl Distribution {
                     subdirectory: direct.subdirectory.as_ref().map(PathBuf::from),
                     url: VerbatimUrl::from_url(url),
                 };
-                let source_dist = distribution_types::SourceDist::DirectUrl(direct_dist);
-                return Ok(Dist::Source(source_dist));
+                distribution_types::SourceDist::DirectUrl(direct_dist)
             }
             Source::Registry(url) => {
-                if let Some(ref sdist) = self.sdist {
-                    let file_url = sdist.url().ok_or_else(|| LockErrorKind::MissingUrl {
+                let Some(ref sdist) = self.sdist else {
+                    return Ok(None);
+                };
+
+                let file_url = sdist.url().ok_or_else(|| LockErrorKind::MissingUrl {
+                    id: self.id.clone(),
+                })?;
+                let filename = sdist
+                    .filename()
+                    .ok_or_else(|| LockErrorKind::MissingFilename {
                         id: self.id.clone(),
                     })?;
-                    let filename =
-                        sdist
-                            .filename()
-                            .ok_or_else(|| LockErrorKind::MissingFilename {
-                                id: self.id.clone(),
-                            })?;
-                    let file = Box::new(distribution_types::File {
-                        dist_info_metadata: false,
-                        filename: filename.to_string(),
-                        hashes: vec![],
-                        requires_python: None,
-                        size: sdist.size(),
-                        upload_time_utc_ms: None,
-                        url: FileLocation::AbsoluteUrl(file_url.to_string()),
-                        yanked: None,
-                    });
-                    let index = IndexUrl::Url(VerbatimUrl::from_url(url.clone()));
-                    let reg_dist = RegistrySourceDist {
-                        name: self.id.name.clone(),
-                        version: self.id.version.clone(),
-                        file,
-                        index,
-                        wheels: vec![],
-                    };
-                    let source_dist = distribution_types::SourceDist::Registry(reg_dist);
-                    return Ok(Dist::Source(source_dist));
-                }
-            }
-        }
+                let file = Box::new(distribution_types::File {
+                    dist_info_metadata: false,
+                    filename: filename.to_string(),
+                    hashes: sdist
+                        .hash()
+                        .map(|hash| vec![hash.0.clone()])
+                        .unwrap_or_default(),
+                    requires_python: None,
+                    size: sdist.size(),
+                    upload_time_utc_ms: None,
+                    url: FileLocation::AbsoluteUrl(file_url.clone()),
+                    yanked: None,
+                });
+                let index = IndexUrl::Url(VerbatimUrl::from_url(url.clone()));
 
-        Err(LockErrorKind::NeitherSourceDistNorWheel {
-            id: self.id.clone(),
-        }
-        .into())
+                let reg_dist = RegistrySourceDist {
+                    name: self.id.name.clone(),
+                    version: self.id.version.clone(),
+                    file,
+                    index,
+                    wheels: vec![],
+                };
+                distribution_types::SourceDist::Registry(reg_dist)
+            }
+        };
+
+        Ok(Some(sdist))
+    }
+
+    /// Convert the [`Distribution`] to a [`PrioritizedDist`] that can be used for resolution, if
+    /// it has a registry source.
+    fn to_prioritized_dist(
+        &self,
+        workspace_root: &Path,
+    ) -> Result<Option<PrioritizedDist>, LockError> {
+        let prioritized_dist = match &self.id.source {
+            Source::Registry(url) => {
+                let mut prioritized_dist = PrioritizedDist::default();
+
+                // Add the source distribution.
+                if let Some(distribution_types::SourceDist::Registry(sdist)) =
+                    self.to_source_dist(workspace_root)?
+                {
+                    // When resolving from a lockfile all sources are equally compatible.
+                    let compat = SourceDistCompatibility::Compatible(HashComparison::Matched);
+                    let hash = self
+                        .sdist
+                        .as_ref()
+                        .and_then(|sdist| sdist.hash().map(|h| h.0.clone()));
+                    prioritized_dist.insert_source(sdist, hash, compat);
+                };
+
+                // Add any wheels.
+                for wheel in &self.wheels {
+                    let hash = wheel.hash.as_ref().map(|h| h.0.clone());
+                    let wheel = wheel.to_registry_dist(url);
+                    let compat =
+                        WheelCompatibility::Compatible(HashComparison::Matched, None, None);
+                    prioritized_dist.insert_built(wheel, hash, compat);
+                }
+
+                prioritized_dist
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(prioritized_dist))
     }
 
     /// Convert the [`Distribution`] to [`Metadata`] that can be used for resolution.
-    pub fn into_metadata(self, workspace_root: &Path) -> Result<Metadata, LockError> {
+    pub fn to_metadata(&self, workspace_root: &Path) -> Result<Metadata, LockError> {
         let name = self.name().clone();
         let version = self.id.version.clone();
         let provides_extras = self.optional_dependencies.keys().cloned().collect();
@@ -733,19 +973,17 @@ impl Distribution {
         let mut dependency_extras = FxHashMap::default();
         let mut requires_dist = self
             .dependencies
-            .into_iter()
+            .iter()
             .filter_map(|dep| {
-                dep.into_requirement(workspace_root, &mut dependency_extras)
+                dep.to_requirement(workspace_root, &mut dependency_extras)
                     .transpose()
             })
             .collect::<Result<Vec<_>, LockError>>()?;
 
         // Denormalize optional dependencies.
-        for (extra, deps) in self.optional_dependencies {
+        for (extra, deps) in &self.optional_dependencies {
             for dep in deps {
-                if let Some(mut dep) =
-                    dep.into_requirement(workspace_root, &mut dependency_extras)?
-                {
+                if let Some(mut dep) = dep.to_requirement(workspace_root, &mut dependency_extras)? {
                     // Add back the extra marker expression.
                     let marker = MarkerTree::Expression(MarkerExpression::Extra {
                         operator: ExtraOperator::Equal,
@@ -770,13 +1008,13 @@ impl Distribution {
 
         let dev_dependencies = self
             .dev_dependencies
-            .into_iter()
+            .iter()
             .map(|(group, deps)| {
                 let mut dependency_extras = FxHashMap::default();
                 let mut deps = deps
-                    .into_iter()
+                    .iter()
                     .filter_map(|dep| {
-                        dep.into_requirement(workspace_root, &mut dependency_extras)
+                        dep.to_requirement(workspace_root, &mut dependency_extras)
                             .transpose()
                     })
                     .collect::<Result<Vec<_>, LockError>>()?;
@@ -788,7 +1026,7 @@ impl Distribution {
                     }
                 }
 
-                Ok((group, deps))
+                Ok((group.clone(), deps))
             })
             .collect::<Result<_, LockError>>()?;
 
@@ -807,8 +1045,10 @@ impl Distribution {
 
         self.id.to_toml(None, &mut table);
 
-        if let Some(ref sdist) = self.sdist {
-            table.insert("sdist", value(sdist.to_toml()?));
+        if let Some(ref fork_markers) = self.fork_markers {
+            let wheels =
+                each_element_on_its_line_array(fork_markers.iter().map(ToString::to_string));
+            table.insert("environment-markers", value(wheels));
         }
 
         if !self.dependencies.is_empty() {
@@ -842,6 +1082,10 @@ impl Distribution {
                 dev_dependencies.insert(extra.as_ref(), value(deps));
             }
             table.insert("dev-dependencies", Item::Table(dev_dependencies));
+        }
+
+        if let Some(ref sdist) = self.sdist {
+            table.insert("sdist", value(sdist.to_toml()?));
         }
 
         if !self.wheels.is_empty() {
@@ -883,6 +1127,40 @@ impl Distribution {
         &self.id.name
     }
 
+    /// Returns the [`Version`] of the distribution.
+    pub fn version(&self) -> &Version {
+        &self.id.version
+    }
+
+    pub fn fork_markers(&self) -> Option<&BTreeSet<MarkerTree>> {
+        self.fork_markers.as_ref()
+    }
+
+    /// Returns a [`VersionId`] for this package that can be used for resolution.
+    fn version_id(&self, workspace_root: &Path) -> Result<VersionId, LockError> {
+        match &self.id.source {
+            Source::Registry(_) => Ok(VersionId::NameVersion(
+                self.name().clone(),
+                self.id.version.clone(),
+            )),
+            _ => Ok(self.to_source_dist(workspace_root)?.unwrap().version_id()),
+        }
+    }
+
+    /// Returns all the hashes associated with this [`Distribution`].
+    fn hashes(&self) -> Vec<HashDigest> {
+        let mut hashes = Vec::new();
+        if let Some(ref sdist) = self.sdist {
+            if let Some(hash) = sdist.hash() {
+                hashes.push(hash.0.clone());
+            }
+        }
+        for wheel in &self.wheels {
+            hashes.extend(wheel.hash.as_ref().map(|h| h.0.clone()));
+        }
+        hashes
+    }
+
     /// Returns the [`ResolvedRepositoryReference`] for the distribution, if it is a Git source.
     pub fn as_git_ref(&self) -> Option<ResolvedRepositoryReference> {
         match &self.id.source {
@@ -915,13 +1193,15 @@ struct DistributionWire {
     id: DistributionId,
     #[serde(default)]
     sdist: Option<SourceDist>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     wheels: Vec<Wheel>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, rename = "environment-markers")]
+    fork_markers: BTreeSet<MarkerTree>,
+    #[serde(default)]
     dependencies: Vec<DependencyWire>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default)]
     optional_dependencies: BTreeMap<ExtraName, Vec<DependencyWire>>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default)]
     dev_dependencies: BTreeMap<GroupName, Vec<DependencyWire>>,
 }
 
@@ -939,6 +1219,7 @@ impl DistributionWire {
             id: self.id,
             sdist: self.sdist,
             wheels: self.wheels,
+            fork_markers: (!self.fork_markers.is_empty()).then_some(self.fork_markers),
             dependencies: unwire_deps(self.dependencies)?,
             optional_dependencies: self
                 .optional_dependencies
@@ -963,6 +1244,7 @@ impl From<Distribution> for DistributionWire {
             id: dist.id,
             sdist: dist.sdist,
             wheels: dist.wheels,
+            fork_markers: dist.fork_markers.unwrap_or_default(),
             dependencies: wire_deps(dist.dependencies),
             optional_dependencies: dist
                 .optional_dependencies
@@ -1075,7 +1357,7 @@ impl From<DistributionId> for DistributionIdForDependency {
 ///
 /// NOTE: Care should be taken when adding variants to this enum. Namely, new
 /// variants should be added without changing the relative ordering of other
-/// variants. Otherwise, this could cause the lock file to have a different
+/// variants. Otherwise, this could cause the lockfile to have a different
 /// canonical ordering of distributions.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, serde::Deserialize)]
 #[serde(try_from = "SourceWire")]
@@ -1086,19 +1368,6 @@ enum Source {
     Path(PathBuf),
     Directory(PathBuf),
     Editable(PathBuf),
-}
-
-/// A [`PathBuf`], but we show `.` instead of an empty path.
-///
-/// We also normalize backslashes to forward slashes on Windows, to ensure
-/// that the lock file contains portable paths.
-fn serialize_path_with_dot(path: &Path) -> Cow<str> {
-    let path = path.to_slash_lossy();
-    if path.is_empty() {
-        Cow::Borrowed(".")
-    } else {
-        path
-    }
 }
 
 impl Source {
@@ -1232,21 +1501,18 @@ impl Source {
                 }
             }
             Source::Path(ref path) => {
-                source_table.insert(
-                    "path",
-                    Value::from(serialize_path_with_dot(path).into_owned()),
-                );
+                source_table.insert("path", Value::from(PortablePath::from(path).to_string()));
             }
             Source::Directory(ref path) => {
                 source_table.insert(
                     "directory",
-                    Value::from(serialize_path_with_dot(path).into_owned()),
+                    Value::from(PortablePath::from(path).to_string()),
                 );
             }
             Source::Editable(ref path) => {
                 source_table.insert(
                     "editable",
-                    Value::from(serialize_path_with_dot(path).into_owned()),
+                    Value::from(PortablePath::from(path).to_string()),
                 );
             }
         }
@@ -1261,7 +1527,7 @@ impl std::fmt::Display for Source {
                 write!(f, "{}+{}", self.name(), url)
             }
             Source::Path(path) | Source::Directory(path) | Source::Editable(path) => {
-                write!(f, "{}+{}", self.name(), serialize_path_with_dot(path))
+                write!(f, "{}+{}", self.name(), PortablePath::from(path))
             }
         }
     }
@@ -1279,14 +1545,18 @@ impl Source {
         }
     }
 
-    /// Returns true when this source kind requires a hash.
+    /// Returns `Some(true)` to indicate that the source kind _must_ include a
+    /// hash.
     ///
-    /// When this returns false, it also implies that a hash should
-    /// _not_ be present.
-    fn requires_hash(&self) -> bool {
+    /// Returns `Some(false)` to indicate that the source kind _must not_
+    /// include a hash.
+    ///
+    /// Returns `None` to indicate that the source kind _may_ include a hash.
+    fn requires_hash(&self) -> Option<bool> {
         match *self {
-            Self::Registry(..) | Self::Direct(..) | Self::Path(..) => true,
-            Self::Git(..) | Self::Directory(..) | Self::Editable(..) => false,
+            Self::Registry(..) => None,
+            Self::Direct(..) | Self::Path(..) => Some(true),
+            Self::Git(..) | Self::Directory(..) | Self::Editable(..) => Some(false),
         }
     }
 }
@@ -1306,13 +1576,13 @@ enum SourceWire {
         subdirectory: Option<String>,
     },
     Path {
-        path: PathBuf,
+        path: PortablePathBuf,
     },
     Directory {
-        directory: PathBuf,
+        directory: PortablePathBuf,
     },
     Editable {
-        editable: PathBuf,
+        editable: PortablePathBuf,
     },
 }
 
@@ -1345,9 +1615,9 @@ impl TryFrom<SourceWire> for Source {
                 Ok(Source::Git(url, git_source))
             }
             Direct { url, subdirectory } => Ok(Source::Direct(url, DirectSource { subdirectory })),
-            Path { path } => Ok(Source::Path(path)),
-            Directory { directory } => Ok(Source::Directory(directory)),
-            Editable { editable } => Ok(Source::Editable(editable)),
+            Path { path } => Ok(Source::Path(path.into())),
+            Directory { directory } => Ok(Source::Directory(directory.into())),
+            Editable { editable } => Ok(Source::Editable(editable.into())),
         }
     }
 }
@@ -1359,7 +1629,7 @@ struct DirectSource {
 
 /// NOTE: Care should be taken when adding variants to this enum. Namely, new
 /// variants should be added without changing the relative ordering of other
-/// variants. Otherwise, this could cause the lock file to have a different
+/// variants. Otherwise, this could cause the lockfile to have a different
 /// canonical ordering of distributions.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 struct GitSource {
@@ -1415,10 +1685,10 @@ enum GitSourceKind {
 }
 
 /// Inspired by: <https://discuss.python.org/t/lock-files-again-but-this-time-w-sdists/46593>
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize, PartialEq, Eq)]
 struct SourceDistMetadata {
     /// A hash of the source distribution.
-    hash: Hash,
+    hash: Option<Hash>,
     /// The size of the source distribution in bytes.
     ///
     /// This is only present for source distributions that come from registries.
@@ -1429,33 +1699,19 @@ struct SourceDistMetadata {
 /// locked against was found. The location does not need to exist in the
 /// future, so this should be treated as only a hint to where to look
 /// and/or recording where the source dist file originally came from.
-#[derive(Clone, Debug, serde::Deserialize)]
-#[serde(untagged)]
+#[derive(Clone, Debug, serde::Deserialize, PartialEq, Eq)]
+#[serde(try_from = "SourceDistWire")]
 enum SourceDist {
     Url {
-        url: Url,
+        url: UrlString,
         #[serde(flatten)]
         metadata: SourceDistMetadata,
     },
     Path {
-        #[serde(deserialize_with = "deserialize_path_with_dot")]
         path: PathBuf,
         #[serde(flatten)]
         metadata: SourceDistMetadata,
     },
-}
-
-/// A [`PathBuf`], but we show `.` instead of an empty path.
-fn deserialize_path_with_dot<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let path = String::deserialize(deserializer)?;
-    if path == "." {
-        Ok(PathBuf::new())
-    } else {
-        Ok(PathBuf::from(path))
-    }
 }
 
 impl SourceDist {
@@ -1468,19 +1724,20 @@ impl SourceDist {
         }
     }
 
-    fn url(&self) -> Option<&Url> {
+    fn url(&self) -> Option<&UrlString> {
         match &self {
             SourceDist::Url { url, .. } => Some(url),
             SourceDist::Path { .. } => None,
         }
     }
 
-    fn hash(&self) -> &Hash {
+    fn hash(&self) -> Option<&Hash> {
         match &self {
-            SourceDist::Url { metadata, .. } => &metadata.hash,
-            SourceDist::Path { metadata, .. } => &metadata.hash,
+            SourceDist::Url { metadata, .. } => metadata.hash.as_ref(),
+            SourceDist::Path { metadata, .. } => metadata.hash.as_ref(),
         }
     }
+
     fn size(&self) -> Option<u64> {
         match &self {
             SourceDist::Url { metadata, .. } => metadata.size,
@@ -1490,24 +1747,6 @@ impl SourceDist {
 }
 
 impl SourceDist {
-    /// Returns the TOML representation of this source distribution.
-    fn to_toml(&self) -> anyhow::Result<InlineTable> {
-        let mut table = InlineTable::new();
-        match &self {
-            SourceDist::Url { url, .. } => {
-                table.insert("url", Value::from(url.as_str()));
-            }
-            SourceDist::Path { path, .. } => {
-                table.insert("path", Value::from(serialize_path_with_dot(path).as_ref()));
-            }
-        }
-        table.insert("hash", Value::from(self.hash().to_string()));
-        if let Some(size) = self.size() {
-            table.insert("size", Value::from(i64::try_from(size)?));
-        }
-        Ok(table)
-    }
-
     fn from_annotated_dist(
         id: &DistributionId,
         annotated_dist: &AnnotatedDist,
@@ -1532,7 +1771,7 @@ impl SourceDist {
                 let Some(sdist) = built_dist.sdist.as_ref() else {
                     return Ok(None);
                 };
-                SourceDist::from_registry_dist(id, sdist).map(Some)
+                SourceDist::from_registry_dist(sdist).map(Some)
             }
             Dist::Built(_) => Ok(None),
             Dist::Source(ref source_dist) => SourceDist::from_source_dist(id, source_dist, hashes),
@@ -1546,12 +1785,12 @@ impl SourceDist {
     ) -> Result<Option<SourceDist>, LockError> {
         match *source_dist {
             distribution_types::SourceDist::Registry(ref reg_dist) => {
-                SourceDist::from_registry_dist(id, reg_dist).map(Some)
+                SourceDist::from_registry_dist(reg_dist).map(Some)
             }
             distribution_types::SourceDist::DirectUrl(ref direct_dist) => {
                 SourceDist::from_direct_dist(id, direct_dist, hashes).map(Some)
             }
-            // An actual sdist entry in the lock file is only required when
+            // An actual sdist entry in the lockfile is only required when
             // it's from a registry or a direct URL. Otherwise, it's strictly
             // redundant with the information in all other kinds of `source`.
             distribution_types::SourceDist::Git(_)
@@ -1560,24 +1799,14 @@ impl SourceDist {
         }
     }
 
-    fn from_registry_dist(
-        id: &DistributionId,
-        reg_dist: &RegistrySourceDist,
-    ) -> Result<SourceDist, LockError> {
+    fn from_registry_dist(reg_dist: &RegistrySourceDist) -> Result<SourceDist, LockError> {
         let url = reg_dist
             .file
             .url
-            .to_url()
+            .to_url_string()
             .map_err(LockErrorKind::InvalidFileUrl)
             .map_err(LockError::from)?;
-        let Some(hash) = reg_dist.file.hashes.first().cloned().map(Hash::from) else {
-            let kind = LockErrorKind::Hash {
-                id: id.clone(),
-                artifact_type: "registry source distribution",
-                expected: true,
-            };
-            return Err(kind.into());
-        };
+        let hash = reg_dist.file.hashes.iter().max().cloned().map(Hash::from);
         let size = reg_dist.file.size;
         Ok(SourceDist::Url {
             url,
@@ -1590,7 +1819,7 @@ impl SourceDist {
         direct_dist: &DirectUrlSourceDist,
         hashes: &[HashDigest],
     ) -> Result<SourceDist, LockError> {
-        let Some(hash) = hashes.first().cloned().map(Hash::from) else {
+        let Some(hash) = hashes.iter().max().cloned().map(Hash::from) else {
             let kind = LockErrorKind::Hash {
                 id: id.clone(),
                 artifact_type: "direct URL source distribution",
@@ -1599,9 +1828,63 @@ impl SourceDist {
             return Err(kind.into());
         };
         Ok(SourceDist::Url {
-            url: direct_dist.url.to_url(),
-            metadata: SourceDistMetadata { hash, size: None },
+            url: UrlString::from(direct_dist.url.to_url()),
+            metadata: SourceDistMetadata {
+                hash: Some(hash),
+                size: None,
+            },
         })
+    }
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum SourceDistWire {
+    Url {
+        url: UrlString,
+        #[serde(flatten)]
+        metadata: SourceDistMetadata,
+    },
+    Path {
+        path: PortablePathBuf,
+        #[serde(flatten)]
+        metadata: SourceDistMetadata,
+    },
+}
+
+impl SourceDist {
+    /// Returns the TOML representation of this source distribution.
+    fn to_toml(&self) -> anyhow::Result<InlineTable> {
+        let mut table = InlineTable::new();
+        match &self {
+            SourceDist::Url { url, .. } => {
+                table.insert("url", Value::from(url.as_ref()));
+            }
+            SourceDist::Path { path, .. } => {
+                table.insert("path", Value::from(PortablePath::from(path).to_string()));
+            }
+        }
+        if let Some(hash) = self.hash() {
+            table.insert("hash", Value::from(hash.to_string()));
+        }
+        if let Some(size) = self.size() {
+            table.insert("size", Value::from(i64::try_from(size)?));
+        }
+        Ok(table)
+    }
+}
+
+impl TryFrom<SourceDistWire> for SourceDist {
+    type Error = Infallible;
+
+    fn try_from(wire: SourceDistWire) -> Result<SourceDist, Infallible> {
+        match wire {
+            SourceDistWire::Url { url, metadata } => Ok(SourceDist::Url { url, metadata }),
+            SourceDistWire::Path { path, metadata } => Ok(SourceDist::Path {
+                path: path.into(),
+                metadata,
+            }),
+        }
     }
 }
 
@@ -1680,14 +1963,14 @@ fn locked_git_url(git_dist: &GitSourceDist) -> Url {
 }
 
 /// Inspired by: <https://discuss.python.org/t/lock-files-again-but-this-time-w-sdists/46593>
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize, PartialEq, Eq)]
 #[serde(try_from = "WheelWire")]
 struct Wheel {
     /// A URL or file path (via `file://`) where the wheel that was locked
     /// against was found. The location does not need to exist in the future,
     /// so this should be treated as only a hint to where to look and/or
     /// recording where the wheel file originally came from.
-    url: Url,
+    url: UrlString,
     /// A hash of the built distribution.
     ///
     /// This is only present for wheels that come from registries and direct
@@ -1755,10 +2038,10 @@ impl Wheel {
         let url = wheel
             .file
             .url
-            .to_url()
+            .to_url_string()
             .map_err(LockErrorKind::InvalidFileUrl)
             .map_err(LockError::from)?;
-        let hash = wheel.file.hashes.first().cloned().map(Hash::from);
+        let hash = wheel.file.hashes.iter().max().cloned().map(Hash::from);
         let size = wheel.file.size;
         Ok(Wheel {
             url,
@@ -1770,8 +2053,8 @@ impl Wheel {
 
     fn from_direct_dist(direct_dist: &DirectUrlBuiltDist, hashes: &[HashDigest]) -> Wheel {
         Wheel {
-            url: direct_dist.url.to_url(),
-            hash: hashes.first().cloned().map(Hash::from),
+            url: direct_dist.url.to_url().into(),
+            hash: hashes.iter().max().cloned().map(Hash::from),
             size: None,
             filename: direct_dist.filename.clone(),
         }
@@ -1779,8 +2062,8 @@ impl Wheel {
 
     fn from_path_dist(path_dist: &PathBuiltDist, hashes: &[HashDigest]) -> Wheel {
         Wheel {
-            url: path_dist.url.to_url(),
-            hash: hashes.first().cloned().map(Hash::from),
+            url: path_dist.url.to_url().into(),
+            hash: hashes.iter().max().cloned().map(Hash::from),
             size: None,
             filename: path_dist.filename.clone(),
         }
@@ -1791,11 +2074,11 @@ impl Wheel {
         let file = Box::new(distribution_types::File {
             dist_info_metadata: false,
             filename: filename.to_string(),
-            hashes: vec![],
+            hashes: self.hash.iter().map(|h| h.0.clone()).collect(),
             requires_python: None,
             size: self.size,
             upload_time_utc_ms: None,
-            url: FileLocation::AbsoluteUrl(self.url.to_string()),
+            url: FileLocation::AbsoluteUrl(self.url.clone()),
             yanked: None,
         });
         let index = IndexUrl::Url(VerbatimUrl::from_url(url.clone()));
@@ -1813,7 +2096,7 @@ struct WheelWire {
     /// against was found. The location does not need to exist in the future,
     /// so this should be treated as only a hint to where to look and/or
     /// recording where the wheel file originally came from.
-    url: Url,
+    url: UrlString,
     /// A hash of the built distribution.
     ///
     /// This is only present for wheels that come from registries and direct
@@ -1862,11 +2145,11 @@ impl TryFrom<WheelWire> for Wheel {
     }
 }
 
-/// A single dependency of a distribution in a lock file.
+/// A single dependency of a distribution in a lockfile.
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 struct Dependency {
     distribution_id: DistributionId,
-    extra: Option<ExtraName>,
+    extra: BTreeSet<ExtraName>,
     marker: Option<MarkerTree>,
 }
 
@@ -1876,8 +2159,8 @@ impl Dependency {
         marker: Option<&MarkerTree>,
     ) -> Dependency {
         let distribution_id = DistributionId::from_annotated_dist(annotated_dist);
-        let extra = annotated_dist.extra.clone();
-        let marker = marker.cloned().and_then(crate::marker::normalize);
+        let extra = annotated_dist.extra.iter().cloned().collect();
+        let marker = marker.cloned();
         Dependency {
             distribution_id,
             extra,
@@ -1886,25 +2169,28 @@ impl Dependency {
     }
 
     /// Convert the [`Dependency`] to a [`Requirement`] that can be used for resolution.
-    pub(crate) fn into_requirement(
-        self,
+    pub(crate) fn to_requirement(
+        &self,
         workspace_root: &Path,
         extras: &mut FxHashMap<PackageName, Vec<ExtraName>>,
     ) -> Result<Option<Requirement>, LockError> {
         // Keep track of extras, these will be denormalized later.
-        if let Some(extra) = self.extra {
+        if !self.extra.is_empty() {
             extras
-                .entry(self.distribution_id.name)
+                .entry(self.distribution_id.name.clone())
                 .or_default()
-                .push(extra);
-
-            return Ok(None);
+                .extend(self.extra.iter().cloned());
         }
 
         // Reconstruct the `RequirementSource` from the `Source`.
-        let source = match self.distribution_id.source {
+        let source = match &self.distribution_id.source {
             Source::Registry(_) => RequirementSource::Registry {
-                specifier: VersionSpecifiers::empty(),
+                // We don't store the version specifier that was originally used for resolution in
+                // the lockfile, so this might be too restrictive. However, this is the only version
+                // we have the metadata for, so if resolution fails we will need to fallback to a
+                // clean resolve.
+                specifier: VersionSpecifier::equals_version(self.distribution_id.version.clone())
+                    .into(),
                 index: None,
             },
             Source::Git(repository, git) => {
@@ -1946,7 +2232,7 @@ impl Dependency {
 
         let requirement = Requirement {
             name: self.distribution_id.name.clone(),
-            marker: self.marker,
+            marker: self.marker.clone(),
             origin: None,
             extras: Vec::new(),
             source,
@@ -1960,8 +2246,13 @@ impl Dependency {
         let mut table = Table::new();
         self.distribution_id
             .to_toml(Some(dist_count_by_name), &mut table);
-        if let Some(ref extra) = self.extra {
-            table.insert("extra", value(extra.to_string()));
+        if !self.extra.is_empty() {
+            let extra_array = self
+                .extra
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Array>();
+            table.insert("extra", value(extra_array));
         }
         if let Some(ref marker) = self.marker {
             table.insert("marker", value(marker.to_string()));
@@ -1973,16 +2264,7 @@ impl Dependency {
 
 impl std::fmt::Display for Dependency {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if let Some(ref extra) = self.extra {
-            write!(
-                f,
-                "{}[{}]=={} @ {}",
-                self.distribution_id.name,
-                extra,
-                self.distribution_id.version,
-                self.distribution_id.source
-            )
-        } else {
+        if self.extra.is_empty() {
             write!(
                 f,
                 "{}=={} @ {}",
@@ -1990,18 +2272,26 @@ impl std::fmt::Display for Dependency {
                 self.distribution_id.version,
                 self.distribution_id.source
             )
+        } else {
+            write!(
+                f,
+                "{}[{}]=={} @ {}",
+                self.distribution_id.name,
+                self.extra.iter().join(","),
+                self.distribution_id.version,
+                self.distribution_id.source
+            )
         }
     }
 }
 
-/// A single dependency of a distribution in a lock file.
+/// A single dependency of a distribution in a lockfile.
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord, serde::Deserialize)]
 struct DependencyWire {
     #[serde(flatten)]
     distribution_id: DistributionIdForDependency,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    extra: Option<ExtraName>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    extra: BTreeSet<ExtraName>,
     marker: Option<MarkerTree>,
 }
 
@@ -2028,11 +2318,11 @@ impl From<Dependency> for DependencyWire {
     }
 }
 
-/// A single hash for a distribution artifact in a lock file.
+/// A single hash for a distribution artifact in a lockfile.
 ///
 /// A hash is encoded as a single TOML string in the format
 /// `{algorithm}:{digest}`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Hash(HashDigest);
 
 impl From<HashDigest> for Hash {
@@ -2157,7 +2447,7 @@ enum LockErrorKind {
     ),
     /// An error that occurs when there's an unrecognized dependency.
     ///
-    /// That is, a dependency for a distribution that isn't in the lock file.
+    /// That is, a dependency for a distribution that isn't in the lockfile.
     #[error(
         "for distribution `{id}`, found dependency `{dependency}` with no locked distribution"
     )]
@@ -2224,7 +2514,7 @@ enum LockErrorKind {
     },
     /// An error that occurs when a distribution is included with neither wheels nor a source
     /// distribution.
-    #[error("found distribution {id} with neither wheels nor source distribution")]
+    #[error("distribution {id} can't be installed because it doesn't have a source distribution or wheel for the current platform")]
     NeitherSourceDistNorWheel {
         /// The ID of the distribution that has a missing base.
         id: DistributionId,
@@ -2308,12 +2598,13 @@ impl std::fmt::Display for HashParseError {
 ///     { name = "sniffio" },
 /// ]
 /// ```
-fn each_element_on_its_line_array(elements: impl Iterator<Item = InlineTable>) -> Array {
+fn each_element_on_its_line_array(elements: impl Iterator<Item = impl Into<Value>>) -> Array {
     let mut array = elements
-        .map(|mut inline_table| {
+        .map(|item| {
+            let mut value = item.into();
             // Each dependency is on its own line and indented.
-            inline_table.decor_mut().set_prefix("\n    ");
-            inline_table
+            value.decor_mut().set_prefix("\n    ");
+            value
         })
         .collect::<Array>();
     // With a trailing comma, inserting another entry doesn't change the preceding line,
@@ -2495,7 +2786,7 @@ name = "a"
     }
 
     #[test]
-    fn hash_required_present() {
+    fn hash_optional_missing() {
         let data = r#"
 version = 1
 
@@ -2510,7 +2801,22 @@ wheels = [{ url = "https://files.pythonhosted.org/packages/14/fd/2f20c40b45e4fb4
     }
 
     #[test]
-    fn hash_optional_missing() {
+    fn hash_optional_present() {
+        let data = r#"
+version = 1
+
+[[distribution]]
+name = "anyio"
+version = "4.3.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [{ url = "https://files.pythonhosted.org/packages/14/fd/2f20c40b45e4fb4324834aea24bd4afdf1143390242c0b33774da0e2e34f/anyio-4.3.0-py3-none-any.whl", hash = "sha256:048e05d0f6caeed70d731f3db756d35dcc1f35747c8c403364a8332c630441b8" }]
+"#;
+        let result: Result<Lock, _> = toml::from_str(data);
+        insta::assert_debug_snapshot!(result);
+    }
+
+    #[test]
+    fn hash_required_present() {
         let data = r#"
 version = 1
 

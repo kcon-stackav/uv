@@ -27,15 +27,6 @@ pub enum GitResolverError {
 pub struct GitResolver(Arc<DashMap<RepositoryReference, GitSha>>);
 
 impl GitResolver {
-    /// Initialize a [`GitResolver`] with a set of resolved references.
-    pub fn from_refs(refs: Vec<ResolvedRepositoryReference>) -> Self {
-        Self(Arc::new(
-            refs.into_iter()
-                .map(|ResolvedRepositoryReference { reference, sha }| (reference, sha))
-                .collect(),
-        ))
-    }
-
     /// Inserts a new [`GitSha`] for the given [`RepositoryReference`].
     pub fn insert(&self, reference: RepositoryReference, sha: GitSha) {
         self.0.insert(reference, sha);
@@ -63,7 +54,7 @@ impl GitResolver {
         fs::create_dir_all(&lock_dir).await?;
         let repository_url = RepositoryUrl::new(url.repository());
         let _lock = LockedFile::acquire(
-            lock_dir.join(cache_key::digest(&repository_url)),
+            lock_dir.join(cache_key::cache_digest(&repository_url)),
             &repository_url,
         )?;
 
@@ -108,16 +99,7 @@ impl GitResolver {
             }
         }
 
-        // Fetch the precise SHA of the Git reference (which could be a branch, a tag, a partial
-        // commit, etc.).
-        let source = if let Some(reporter) = reporter {
-            GitSource::new(url.clone(), client, cache).with_reporter(reporter)
-        } else {
-            GitSource::new(url.clone(), client, cache)
-        };
-        let fetch = tokio::task::spawn_blocking(move || source.fetch())
-            .await?
-            .map_err(GitResolverError::Git)?;
+        let fetch = self.fetch(url, client, cache, reporter).await?;
         let git = fetch.into_git();
 
         // Insert the resolved URL into the in-memory cache.

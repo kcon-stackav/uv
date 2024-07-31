@@ -11,8 +11,10 @@ extend-ignore-re = [
     "FrIeNdLy-\\._\\.-bArD",
     "I borken you cache",
     "eb1ba5f5",
+    "e8208120cae3ba69",
     "github_pat_[0-9a-zA-Z_]+",
     "LICENSEs",
+    "astroid",
 ]
 
 [default.extend-identifiers]

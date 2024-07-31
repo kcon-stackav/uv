@@ -20,7 +20,7 @@ pep508_rs = { workspace = true }
 pypi-types = { workspace = true }
 uv-configuration = { workspace = true }
 uv-fs = { workspace = true }
-uv-toolchain = { workspace = true }
+uv-python = { workspace = true }
 uv-types = { workspace = true }
 uv-virtualenv = { workspace = true }
 
@@ -28,7 +28,6 @@ anyhow = { workspace = true }
 fs-err = { workspace = true }
 indoc = { workspace = true }
 itertools = { workspace = true }
-once_cell = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

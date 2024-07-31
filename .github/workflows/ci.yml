@@ -36,6 +36,7 @@ jobs:
             code:
               - "**/*"
               - "!docs/**/*"
+              - "!mkdocs.*.yml"
               - "!**/*.md"
               - "!bin/**"
               - "!assets/**"
@@ -44,6 +45,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
 
       - name: "Install Rustfmt"
         run: rustup component add rustfmt
@@ -54,11 +59,27 @@ jobs:
       - name: "Prettier"
         run: npx prettier --check "**/*.{json5,yaml,yml}"
 
+      - name: "README check"
+        run: python scripts/transform_readme.py --target pypi
+
+  python-lint:
+    name: "Python lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
+
       - name: "Ruff format"
         run: pipx run ruff format --diff .
 
       - name: "Ruff check"
         run: pipx run ruff check .
+
+      - name: "Mypy check"
+        run: pipx run --python 3.12 mypy
 
   cargo-clippy:
     needs: determine_changes
@@ -90,7 +111,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: "${{ github.workspace}}/.xwin"
-          key: cargo-xwin
+          key: cargo-xwin-x86_64
       - name: Load rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -100,7 +121,7 @@ jobs:
         with:
           tool: cargo-xwin
       - name: Install xwin dependencies
-        run: sudo apt-get install --no-install-recommends -y llvm clang cmake ninja-build
+        run: sudo apt-get install --no-install-recommends -y lld llvm clang cmake ninja-build
       - name: "Clippy"
         run: cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets --all-features --locked --profile fast-build -- -D warnings
         env:
@@ -137,7 +158,7 @@ jobs:
 
       - name: "Install required Python versions"
         run: |
-          cargo run toolchain install
+          cargo run python install
 
       - name: "Install cargo nextest"
         uses: taiki-e/install-action@v2
@@ -174,7 +195,7 @@ jobs:
 
       - name: "Install required Python versions"
         run: |
-          cargo run toolchain install
+          cargo run python install
 
       - name: "Install cargo nextest"
         uses: taiki-e/install-action@v2
@@ -275,67 +296,126 @@ jobs:
           uv venv
           uv pip install ruff
 
-  # Separate job for the nightly crate
-  windows-trampoline:
+  # Separate jobs for the nightly crate
+  windows-trampoline-check:
     needs: determine_changes
     if: ${{ github.repository == 'astral-sh/uv' && (needs.determine_changes.outputs.code == 'true' || github.ref == 'refs/heads/main') }}
-    runs-on: windows-latest
-    name: "check windows trampoline"
+    runs-on: ubuntu-latest
+    name: "check windows trampoline | ${{ matrix.target-arch }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        target-arch: ["x86_64", "i686", "aarch64"]
     steps:
-      - name: Create Dev Drive using ReFS
-        run: |
-          $Volume = New-VHD -Path C:/uv_dev_drive.vhdx -SizeBytes 10GB |
-                    Mount-VHD -Passthru |
-                    Initialize-Disk -Passthru |
-                    New-Partition -AssignDriveLetter -UseMaximumSize |
-                    Format-Volume -FileSystem ReFS -Confirm:$false -Force
-          Write-Output $Volume
-          Write-Output "DEV_DRIVE=$($Volume.DriveLetter):" >> $env:GITHUB_ENV
-
       - uses: actions/checkout@v4
 
-      # actions/checkout does not let us clone into anywhere outside ${{ github.workspace }}, so we have to copy the clone...
-      - name: Copy Git Repo to Dev Drive
-        run: |
-          Copy-Item -Path "${{ github.workspace }}" -Destination "${{ env.DEV_DRIVE }}/uv" -Recurse
-
       - name: "Install Rust toolchain"
-        working-directory: ${{ env.DEV_DRIVE }}/uv/crates/uv-trampoline
-        env:
-          CARGO_HOME: ${{ env.DEV_DRIVE }}/.cargo
-          RUSTUP_HOME: ${{ env.DEV_DRIVE }}/.rustup
+        working-directory: ${{ github.workspace }}/crates/uv-trampoline
         run: |
-          rustup target add x86_64-pc-windows-msvc
-          rustup component add clippy rust-src --toolchain nightly-2024-05-27-x86_64-pc-windows-msvc
+          rustup target add ${{ matrix.target-arch }}-pc-windows-msvc
+          rustup component add rust-src --target ${{ matrix.target-arch }}-pc-windows-msvc
+
+      - name: Load xwin cache
+        uses: actions/cache@v4
+        with:
+          path: "${{ github.workspace }}/.xwin"
+          key: cargo-xwin-${{ matrix.target-arch }}
 
       - uses: rui314/setup-mold@v1
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ${{ env.DEV_DRIVE }}/uv/crates/uv-trampoline
-        env:
-          CARGO_HOME: ${{ env.DEV_DRIVE }}/.cargo
-          RUSTUP_HOME: ${{ env.DEV_DRIVE }}/.rustup
+          workspaces: ${{ github.workspace }}/crates/uv-trampoline
+
+      - name: "Install cargo-xwin and cargo-bloat"
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-xwin,cargo-bloat
+
+      - name: "Install xwin dependencies"
+        run: sudo apt-get install --no-install-recommends -y lld llvm clang cmake ninja-build
 
       - name: "Clippy"
-        working-directory: ${{ env.DEV_DRIVE }}/uv/crates/uv-trampoline
+        working-directory: ${{ github.workspace }}/crates/uv-trampoline
+        if: matrix.target-arch == 'x86_64'
+        run: cargo xwin clippy --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
         env:
-          CARGO_HOME: ${{ env.DEV_DRIVE }}/.cargo
-          RUSTUP_HOME: ${{ env.DEV_DRIVE }}/.rustup
-        run: cargo clippy --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
+          XWIN_ARCH: "x86_64"
+          XWIN_CACHE_DIR: "${{ github.workspace }}/.xwin"
 
-      - name: "Build"
-        working-directory: ${{ env.DEV_DRIVE }}/uv/crates/uv-trampoline
+      - name: "Bloat Check"
+        working-directory: ${{ github.workspace }}/crates/uv-trampoline
+        if: matrix.target-arch == 'x86_64'
+        run: |
+          cargo xwin bloat --release --target x86_64-pc-windows-msvc | \
+          grep -q -E 'core::fmt|std::panicking|std::backtrace_rs' && exit 1 || exit 0
         env:
-          CARGO_HOME: ${{ env.DEV_DRIVE }}/.cargo
-          RUSTUP_HOME: ${{ env.DEV_DRIVE }}/.rustup
-        run: cargo build --release --target x86_64-pc-windows-msvc
+          XWIN_ARCH: "x86_64"
+          XWIN_CACHE_DIR: "${{ github.workspace }}/.xwin"
+
+  # Separate jobs for the nightly crate
+  windows-trampoline-test:
+    needs: determine_changes
+    if: ${{ github.repository == 'astral-sh/uv' && (needs.determine_changes.outputs.code == 'true' || github.ref == 'refs/heads/main') }}
+    runs-on: windows-latest
+    name: "test windows trampoline | ${{ matrix.target-arch }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        target-arch: ["x86_64", "i686"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Install Rust toolchain"
+        working-directory: ${{ github.workspace }}/crates/uv-trampoline
+        run: |
+          rustup target add ${{ matrix.target-arch }}-pc-windows-msvc
+          rustup component add rust-src --target ${{ matrix.target-arch }}-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ github.workspace }}/crates/uv-trampoline
+      # Build and copy the new binaries
+      - name: "Build"
+        working-directory: ${{ github.workspace }}/crates/uv-trampoline
+        run: |
+          cargo build --target ${{ matrix.target-arch }}-pc-windows-msvc
+          cp target/${{ matrix.target-arch }}-pc-windows-msvc/debug/uv-trampoline-console.exe trampolines/uv-trampoline-${{ matrix.target-arch }}-console.exe
+          cp target/${{ matrix.target-arch }}-pc-windows-msvc/debug/uv-trampoline-gui.exe trampolines/uv-trampoline-${{ matrix.target-arch }}-gui.exe
+      - name: "Test"
+        working-directory: ${{ github.workspace }}/crates/uv-trampoline
+        run: cargo test --target ${{ matrix.target-arch }}-pc-windows-msvc --test *
 
   typos:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: crate-ci/typos@master
+
+  docs:
+    name: "mkdocs"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MKDOCS_INSIDERS_SSH_KEY_EXISTS: ${{ secrets.MKDOCS_INSIDERS_SSH_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+      - name: "Add SSH key"
+        if: ${{ env.MKDOCS_INSIDERS_SSH_KEY_EXISTS == 'true' }}
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.MKDOCS_INSIDERS_SSH_KEY }}
+      - name: "Install Insiders dependencies"
+        if: ${{ env.MKDOCS_INSIDERS_SSH_KEY_EXISTS == 'true' }}
+        run: pip install -r docs/requirements-insiders.txt
+      - name: "Install dependencies"
+        if: ${{ env.MKDOCS_INSIDERS_SSH_KEY_EXISTS != 'true' }}
+        run: pip install -r docs/requirements.txt
+      - name: "Build Insiders docs"
+        if: ${{ env.MKDOCS_INSIDERS_SSH_KEY_EXISTS == 'true' }}
+        run: mkdocs build --strict -f mkdocs.insiders.yml
+      - name: "Build docs"
+        if: ${{ env.MKDOCS_INSIDERS_SSH_KEY_EXISTS != 'true' }}
+        run: mkdocs build --strict -f mkdocs.public.yml
 
   build-binary-linux:
     needs: determine_changes
@@ -524,6 +604,262 @@ jobs:
           echo "$CONDA_PREFIX"
           ./uv pip install anyio
 
+  integration-test-pypy-linux:
+    needs: build-binary-linux
+    name: "integration test | pypy on ubuntu"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Download binary"
+        uses: actions/download-artifact@v4
+        with:
+          name: uv-linux-${{ github.sha }}
+
+      - name: "Prepare binary"
+        run: chmod +x ./uv
+
+      - name: "Install PyPy"
+        run: ./uv python install pypy3.9
+
+      - name: "Create a virtual environment"
+        run: |
+          ./uv venv -p pypy3.9 --python-preference only-managed
+
+      - name: "Check for executables"
+        run: |
+          check_in_bin() {
+              local executable_name=$1
+              local bin_path=".venv/bin"
+
+              if [[ -x "$bin_path/$executable_name" ]]; then
+                  return 0
+              else
+                  echo "Executable '$executable_name' not found in folder '$bin_path'."
+                  return 1
+              fi
+          }
+
+          executables=("pypy" "pypy3" "python")
+
+          all_found=true
+          for executable_name in "${executables[@]}"; do
+              check_in_bin "$executable_name" "$folder_path"
+              result=$?
+
+              if [[ $result -ne 0 ]]; then
+                  all_found=false
+              fi
+          done
+
+          if ! $all_found; then
+            echo "One or more expected executables were not found."
+            exit 1
+          fi
+
+      - name: "Check version"
+        run: |
+          .venv/bin/pypy --version
+          .venv/bin/pypy3 --version
+          .venv/bin/python --version
+
+      - name: "Check install"
+        run: |
+          ./uv pip install anyio
+
+  integration-test-pypy-windows:
+    needs: build-binary-windows
+    name: "integration test | pypy on windows"
+    runs-on: windows-latest
+
+    steps:
+      - name: "Download binary"
+        uses: actions/download-artifact@v4
+        with:
+          name: uv-windows-${{ github.sha }}
+
+      - name: "Install PyPy"
+        run: .\uv.exe python install pypy3.9
+
+      - name: "Create a virtual environment"
+        run: |
+          .\uv.exe venv -p pypy3.9 --python-preference only-managed
+
+      - name: "Check for executables"
+        shell: python
+        run: |
+          import sys
+          from pathlib import Path
+
+          def binary_exist(binary):
+            binaries_path = Path(".venv\\Scripts")
+            if (binaries_path / binary).exists():
+              return True
+            print(f"Executable '{binary}' not found in folder '{binaries_path}'.")
+
+          all_found = True
+          expected_binaries = [
+              "pypy3.9.exe",
+              "pypy3.9w.exe",
+              "pypy3.exe",
+              "pypyw.exe",
+              "python.exe",
+              "python3.9.exe",
+              "python3.exe",
+              "pythonw.exe",
+          ]
+          for binary in expected_binaries:
+            if not binary_exist(binary):
+              all_found = False
+
+          if not all_found:
+            print("One or more expected executables were not found.")
+            sys.exit(1)
+
+      - name: "Check version"
+        run: |
+          & .venv\Scripts\pypy3.9.exe --version
+          & .venv\Scripts\pypy3.exe --version
+          & .venv\Scripts\python.exe --version
+
+      - name: "Check install"
+        env:
+          # Avoid debug build stack overflows.
+          UV_STACK_SIZE: 2000000 # 2 megabyte, double the default on windows
+        run: |
+          .\uv.exe pip install anyio
+
+  integration-test-graalpy-linux:
+    needs: build-binary-linux
+    name: "integration test | graalpy on ubuntu"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "graalpy24.0"
+
+      - name: "Download binary"
+        uses: actions/download-artifact@v4
+        with:
+          name: uv-linux-${{ github.sha }}
+
+      - name: "Prepare binary"
+        run: chmod +x ./uv
+
+      - name: Graalpy info
+        run: |
+          which graalpy
+          echo "GRAAL_PYTHONHOME=$(graalpy -c 'print(__graalpython__.home)')" >> $GITHUB_ENV
+
+      - name: "Create a virtual environment"
+        run: |
+          ./uv venv -p $(which graalpy)
+
+      - name: "Check for executables"
+        run: |
+          check_in_bin() {
+              local executable_name=$1
+              local bin_path=".venv/bin"
+
+              if [[ -x "$bin_path/$executable_name" ]]; then
+                  return 0
+              else
+                  echo "Executable '$executable_name' not found in folder '$bin_path'."
+                  return 1
+              fi
+          }
+
+          executables=("graalpy" "python3" "python")
+
+          all_found=true
+          for executable_name in "${executables[@]}"; do
+              check_in_bin "$executable_name" "$folder_path"
+              result=$?
+
+              if [[ $result -ne 0 ]]; then
+                  all_found=false
+              fi
+          done
+
+          if ! $all_found; then
+            echo "One or more expected executables were not found."
+            exit 1
+          fi
+
+      - name: "Check version"
+        run: |
+          .venv/bin/graalpy --version
+          .venv/bin/python3 --version
+          .venv/bin/python --version
+
+      - name: "Check install"
+        run: |
+          ./uv pip install anyio
+
+  integration-test-graalpy-windows:
+    needs: build-binary-windows
+    name: "integration test | graalpy on windows"
+    runs-on: windows-latest
+
+    steps:
+      - uses: timfel/setup-python@fc9bcb4a04f5b1ea7d678c2ca7ea1c479a2468d7
+        with:
+          python-version: "graalpy24.0"
+
+      - name: "Download binary"
+        uses: actions/download-artifact@v4
+        with:
+          name: uv-windows-${{ github.sha }}
+
+      - name: Graalpy info
+        run: Get-Command graalpy
+
+      - name: "Create a virtual environment"
+        run: |
+          $graalpy = (Get-Command graalpy).source
+          .\uv.exe venv -p $graalpy
+
+      - name: "Check for executables"
+        shell: python
+        run: |
+          import sys
+          from pathlib import Path
+
+          def binary_exist(binary):
+            binaries_path = Path(".venv\\Scripts")
+            if (binaries_path / binary).exists():
+              return True
+            print(f"Executable '{binary}' not found in folder '{binaries_path}'.")
+
+          all_found = True
+          expected_binaries = [
+              "graalpy.exe",
+              "python.exe",
+              "python3.exe",
+          ]
+          for binary in expected_binaries:
+            if not binary_exist(binary):
+              all_found = False
+
+          if not all_found:
+            print("One or more expected executables were not found.")
+            sys.exit(1)
+
+      - name: "Check version"
+        run: |
+          & .venv\Scripts\graalpy.exe --version
+          & .venv\Scripts\python3.exe --version
+          & .venv\Scripts\python.exe --version
+
+      - name: "Check install"
+        env:
+          # Avoid debug build stack overflows.
+          UV_STACK_SIZE: 2000000 # 2 megabyte, double the default on windows
+        run: |
+          .\uv.exe pip install anyio
+
   integration-test-github-actions:
     needs: build-binary-linux
     name: "integration test | github actions"
@@ -637,7 +973,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: "Install Python"
-        run: dnf install which -y && python3 -m ensurepip
+        run: dnf install python3 which -y && python3 -m ensurepip
 
       - name: "Download binary"
         uses: actions/download-artifact@v4
@@ -957,8 +1293,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          # TODO(konsti): https://github.com/actions/setup-python/issues/888
-          python-version: "3.13.0-beta.1"
+          python-version: "3.13"
           allow-prereleases: true
           cache: pip
 
@@ -1157,15 +1492,16 @@ jobs:
 
       - name: "Install requirements and prime cache"
         run: |
+          sudo apt-get update
           sudo apt-get install -y libsasl2-dev libldap2-dev libkrb5-dev
           cargo run --bin uv -- venv --cache-dir .cache
-          cargo run --bin uv -- pip compile scripts/requirements/airflow.in --cache-dir .cache
+          cargo run --bin uv -- pip compile scripts/requirements/airflow.in --exclude-newer 2024-06-20 --cache-dir .cache
 
       - name: "Build benchmarks"
         run: cargo codspeed build --features codspeed -p bench
 
       - name: "Run benchmarks"
-        uses: CodSpeedHQ/action@v2
+        uses: CodSpeedHQ/action@v3
         with:
           run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}

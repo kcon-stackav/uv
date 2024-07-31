@@ -53,8 +53,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 # For a specific version.
-curl -LsSf https://astral.sh/uv/0.2.19/install.sh | sh
-powershell -c "irm https://astral.sh/uv/0.2.19/install.ps1 | iex"
+curl -LsSf https://astral.sh/uv/0.2.32/install.sh | sh
+powershell -c "irm https://astral.sh/uv/0.2.32/install.ps1 | iex"
 
 # With pip.
 pip install uv
@@ -69,7 +69,7 @@ brew install uv
 To create a virtual environment:
 
 ```shell
-uv venv  # Create a virtual environment at .venv.
+uv venv  # Create a virtual environment at `.venv`.
 ```
 
 To activate the virtual environment:
@@ -197,7 +197,7 @@ Although we generally recommend using virtual environments for dependency manage
 `--system` is appropriate in continuous integration and containerized environments.
 
 The `--system` flag is also used to opt in to mutating system environments. For example, the
-the `--python` argument can be used to request a Python version (e.g., `--python 3.12`), and uv will
+`--python` argument can be used to request a Python version (e.g., `--python 3.12`), and uv will
 search for an interpreter that meets the request. If uv finds a system interpreter (e.g., `/usr/lib/python3.12`),
 then the `--system` flag is required to allow modification of this non-virtual Python environment.
 Without the `--system` flag, uv will ignore any interpreters that are not in virtual environments.
@@ -255,7 +255,7 @@ project-level settings appearing earlier in the merged array.
 Settings provided via environment variables take precedence over persistent configuration, and
 settings provided via the command line take precedence over both.
 
-uv accepts a `--isolated` command-line argument which, when provided, disables the discovery of any
+uv accepts a `--no-config` command-line argument which, when provided, disables the discovery of any
 persistent configuration.
 
 uv also accepts a `--config-file` command-line argument, which accepts a path to a `uv.toml` to use
@@ -282,7 +282,7 @@ Using a password or token:
 
 When using a GitHub personal access token, the username is arbitrary. GitHub does not support logging in with password directly, although other hosts may. If a username is provided without credentials, you will be prompted to enter them.
 
-If there are no credentials present in the URL and authentication is needed, the [Git credential helper](https://git-scm.com/doc/credential-helpers) will be queried.
+If there are no credentials present in the URL and authentication is needed, uv will query the [Git credential helper](https://git-scm.com/doc/credential-helpers).
 
 ### HTTP authentication
 
@@ -574,6 +574,8 @@ uv accepts the following command-line arguments as environment variables:
   uv will require that all dependencies have a hash specified in the requirements file.
 - `UV_CONSTRAINT`: Equivalent to the `--constraint` command-line argument. If set, uv will use this
   file as the constraints file. Uses space-separated list of files.
+- `UV_OVERRIDE`: Equivalent to the `--override` command-line argument. If set, uv will use this
+  file as the overrides file. Uses space-separated list of files.
 - `UV_LINK_MODE`: Equivalent to the `--link-mode` command-line argument. If set, uv will use this
   as a link mode.
 - `UV_NO_BUILD_ISOLATION`: Equivalent to the `--no-build-isolation` command-line argument. If set,
@@ -585,6 +587,9 @@ uv accepts the following command-line arguments as environment variables:
   will use this value as the keyring provider.
 - `UV_CONFIG_FILE`: Equivalent to the `--config-file` command-line argument. Expects a path to a
   local `uv.toml` file to use as the configuration file.
+- `UV_NO_CONFIG`: Equivalent to the `--no-config` command-line argument. If set, uv will not read
+  any configuration files from the current directory, parent directories, or user configuration
+  directories.
 - `UV_CONCURRENT_DOWNLOADS`: Sets the maximum number of in-flight concurrent downloads that `uv`
   will perform at any given time.
 - `UV_CONCURRENT_BUILDS`: Sets the maximum number of source distributions that `uv` will build

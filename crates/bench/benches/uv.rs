@@ -5,8 +5,8 @@ use bench::criterion::{criterion_group, criterion_main, measurement::WallTime, C
 use pypi_types::Requirement;
 use uv_cache::Cache;
 use uv_client::RegistryClientBuilder;
+use uv_python::PythonEnvironment;
 use uv_resolver::Manifest;
-use uv_toolchain::PythonEnvironment;
 
 fn resolve_warm_jupyter(c: &mut Criterion<WallTime>) {
     let runtime = &tokio::runtime::Builder::new_current_thread()
@@ -36,7 +36,7 @@ fn resolve_warm_jupyter(c: &mut Criterion<WallTime>) {
 }
 
 fn resolve_warm_airflow(c: &mut Criterion<WallTime>) {
-    let runtime = &tokio::runtime::Builder::new_multi_thread()
+    let runtime = &tokio::runtime::Builder::new_current_thread()
         // CodSpeed limits the total number of threads to 500
         .max_blocking_threads(256)
         .enable_all()
@@ -71,9 +71,10 @@ criterion_group!(uv, resolve_warm_airflow, resolve_warm_jupyter);
 criterion_main!(uv);
 
 mod resolver {
+    use std::sync::LazyLock;
+
     use anyhow::Result;
     use chrono::NaiveDate;
-    use once_cell::sync::Lazy;
 
     use distribution_types::IndexLocations;
     use install_wheel_rs::linker::LinkMode;
@@ -87,14 +88,14 @@ mod resolver {
     use uv_dispatch::BuildDispatch;
     use uv_distribution::DistributionDatabase;
     use uv_git::GitResolver;
+    use uv_python::PythonEnvironment;
     use uv_resolver::{
         FlatIndex, InMemoryIndex, Manifest, OptionsBuilder, PythonRequirement, ResolutionGraph,
-        Resolver,
+        Resolver, ResolverMarkers,
     };
-    use uv_toolchain::PythonEnvironment;
     use uv_types::{BuildIsolation, EmptyInstalledPackages, HashStrategy, InFlight};
 
-    static MARKERS: Lazy<MarkerEnvironment> = Lazy::new(|| {
+    static MARKERS: LazyLock<MarkerEnvironment> = LazyLock::new(|| {
         MarkerEnvironment::try_from(MarkerEnvironmentBuilder {
             implementation_name: "cpython",
             implementation_version: "3.11.5",
@@ -118,8 +119,8 @@ mod resolver {
         Arch::Aarch64,
     );
 
-    static TAGS: Lazy<Tags> =
-        Lazy::new(|| Tags::from_env(&PLATFORM, (3, 11), "cpython", (3, 11), false).unwrap());
+    static TAGS: LazyLock<Tags> =
+        LazyLock::new(|| Tags::from_env(&PLATFORM, (3, 11), "cpython", (3, 11), false).unwrap());
 
     pub(crate) async fn resolve(
         manifest: Manifest,
@@ -175,7 +176,7 @@ mod resolver {
             manifest,
             options,
             &python_requirement,
-            Some(&MARKERS),
+            ResolverMarkers::SpecificEnvironment(MARKERS.clone()),
             Some(&TAGS),
             &flat_index,
             &index,

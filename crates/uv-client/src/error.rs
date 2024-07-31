@@ -61,6 +61,14 @@ impl Error {
                 return true;
             }
 
+            // The server doesn't support range requests (it doesn't return the necessary headers).
+            ErrorKind::AsyncHttpRangeReader(
+                AsyncHttpRangeReaderError::ContentLengthMissing
+                | AsyncHttpRangeReaderError::ContentRangeMissing,
+            ) => {
+                return true;
+            }
+
             // The server returned a "Method Not Allowed" error, indicating it doesn't support
             // HEAD requests, so we can't check for range requests.
             ErrorKind::WrappedReqwestError(err) => {
@@ -143,18 +151,18 @@ pub enum ErrorKind {
     #[error(transparent)]
     DistInfo(#[from] install_wheel_rs::Error),
 
-    #[error("{0} isn't available locally, but making network requests to registries was banned.")]
+    #[error("{0} isn't available locally, but making network requests to registries was banned")]
     NoIndex(String),
 
     /// The package was not found in the registry.
     ///
     /// Make sure the package name is spelled correctly and that you've
     /// configured the right registry to fetch it from.
-    #[error("Package `{0}` was not found in the registry.")]
+    #[error("Package `{0}` was not found in the registry")]
     PackageNotFound(String),
 
     /// The package was not found in the local (file-based) index.
-    #[error("Package `{0}` was not found in the local index.")]
+    #[error("Package `{0}` was not found in the local index")]
     FileNotFound(String),
 
     /// The metadata file could not be parsed.
@@ -164,10 +172,6 @@ pub enum ErrorKind {
         String,
         #[source] Box<pypi_types::MetadataError>,
     ),
-
-    /// The metadata file was not found in the wheel.
-    #[error("Metadata file `{0}` was not found in {1}")]
-    MetadataNotFound(WheelFilename, String),
 
     /// An error that happened while making a request or in a reqwest middleware.
     #[error(transparent)]

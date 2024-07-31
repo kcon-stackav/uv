@@ -12,35 +12,35 @@ use uv_auth::store_credentials_from_url;
 use uv_cache::Cache;
 use uv_client::{BaseClientBuilder, Connectivity, FlatIndexClient, RegistryClientBuilder};
 use uv_configuration::{
-    BuildOptions, Concurrency, ConfigSettings, ExtrasSpecification, IndexStrategy, PreviewMode,
-    Reinstall, SetupPyStrategy, Upgrade,
+    BuildOptions, Concurrency, ConfigSettings, ExtrasSpecification, HashCheckingMode,
+    IndexStrategy, PreviewMode, Reinstall, SetupPyStrategy, Upgrade,
 };
 use uv_configuration::{KeyringProviderType, TargetTriple};
 use uv_dispatch::BuildDispatch;
 use uv_fs::Simplified;
-use uv_git::GitResolver;
 use uv_installer::{SatisfiesResult, SitePackages};
+use uv_python::{
+    EnvironmentPreference, Prefix, PythonEnvironment, PythonRequest, PythonVersion, Target,
+};
 use uv_requirements::{RequirementsSource, RequirementsSpecification};
 use uv_resolver::{
-    DependencyMode, ExcludeNewer, FlatIndex, InMemoryIndex, OptionsBuilder, PreReleaseMode,
-    PythonRequirement, ResolutionMode,
+    DependencyMode, ExcludeNewer, FlatIndex, OptionsBuilder, PreReleaseMode, PythonRequirement,
+    ResolutionMode, ResolverMarkers,
 };
-use uv_toolchain::{
-    EnvironmentPreference, Prefix, PythonEnvironment, PythonVersion, Target, ToolchainRequest,
-};
-use uv_types::{BuildIsolation, HashStrategy, InFlight};
+use uv_types::{BuildIsolation, HashStrategy};
 
 use crate::commands::pip::operations::Modifications;
 use crate::commands::pip::{operations, resolution_environment};
-use crate::commands::{elapsed, ExitStatus};
+use crate::commands::{elapsed, ExitStatus, SharedState};
 use crate::printer::Printer;
 
 /// Install packages into the current environment.
-#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+#[allow(clippy::fn_params_excessive_bools)]
 pub(crate) async fn pip_install(
     requirements: &[RequirementsSource],
     constraints: &[RequirementsSource],
     overrides: &[RequirementsSource],
+    constraints_from_workspace: Vec<Requirement>,
     overrides_from_workspace: Vec<Requirement>,
     extras: &ExtrasSpecification,
     resolution_mode: ResolutionMode,
@@ -53,7 +53,7 @@ pub(crate) async fn pip_install(
     reinstall: Reinstall,
     link_mode: LinkMode,
     compile: bool,
-    require_hashes: bool,
+    hash_checking: Option<HashCheckingMode>,
     setup_py: SetupPyStrategy,
     connectivity: Connectivity,
     config_settings: &ConfigSettings,
@@ -105,6 +105,12 @@ pub(crate) async fn pip_install(
     )
     .await?;
 
+    let constraints: Vec<Requirement> = constraints
+        .iter()
+        .cloned()
+        .chain(constraints_from_workspace.into_iter())
+        .collect();
+
     let overrides: Vec<UnresolvedRequirementSpecification> = overrides
         .iter()
         .cloned()
@@ -119,7 +125,7 @@ pub(crate) async fn pip_install(
     let environment = PythonEnvironment::find(
         &python
             .as_deref()
-            .map(ToolchainRequest::parse)
+            .map(PythonRequest::parse)
             .unwrap_or_default(),
         EnvironmentPreference::from_system_flag(system, true),
         &cache,
@@ -137,15 +143,13 @@ pub(crate) async fn pip_install(
             "Using `--target` directory at {}",
             target.root().user_display()
         );
-        target.init()?;
-        environment.with_target(target)
+        environment.with_target(target)?
     } else if let Some(prefix) = prefix {
         debug!(
             "Using `--prefix` directory at {}",
             prefix.root().user_display()
         );
-        prefix.init()?;
-        environment.with_prefix(prefix)
+        environment.with_prefix(prefix)?
     } else {
         environment
     };
@@ -199,9 +203,9 @@ pub(crate) async fn pip_install(
                     printer.stderr(),
                     "{}",
                     format!(
-                        "Audited {} in {}",
+                        "Audited {} {}",
                         format!("{num_requirements} package{s}").bold(),
-                        elapsed(start.elapsed())
+                        format!("in {}", elapsed(start.elapsed())).dimmed()
                     )
                     .dimmed()
                 )?;
@@ -229,13 +233,14 @@ pub(crate) async fn pip_install(
     let (tags, markers) = resolution_environment(python_version, python_platform, interpreter)?;
 
     // Collect the set of required hashes.
-    let hasher = if require_hashes {
+    let hasher = if let Some(hash_checking) = hash_checking {
         HashStrategy::from_requirements(
             requirements
                 .iter()
                 .chain(overrides.iter())
                 .map(|entry| (&entry.requirement, entry.hashes.as_slice())),
             Some(&markers),
+            hash_checking,
         )?
     } else {
         HashStrategy::None
@@ -243,7 +248,6 @@ pub(crate) async fn pip_install(
 
     // When resolving, don't take any external preferences into account.
     let preferences = Vec::default();
-    let git = GitResolver::default();
 
     // Ignore development dependencies.
     let dev = Vec::default();
@@ -258,12 +262,10 @@ pub(crate) async fn pip_install(
     }
 
     // Initialize the registry client.
-    let client = RegistryClientBuilder::new(cache.clone())
-        .native_tls(native_tls)
-        .connectivity(connectivity)
+    let client = RegistryClientBuilder::from(client_builder)
+        .cache(cache.clone())
         .index_urls(index_locations.index_urls())
         .index_strategy(index_strategy)
-        .keyring(keyring_provider)
         .markers(&markers)
         .platform(interpreter.platform())
         .build();
@@ -285,22 +287,19 @@ pub(crate) async fn pip_install(
         BuildIsolation::Isolated
     };
 
-    // Create a shared in-memory index.
-    let index = InMemoryIndex::default();
+    // Initialize any shared state.
+    let state = SharedState::default();
 
-    // Track in-flight downloads, builds, etc., across resolutions.
-    let in_flight = InFlight::default();
-
-    // Create a build dispatch for resolution.
-    let resolve_dispatch = BuildDispatch::new(
+    // Create a build dispatch.
+    let build_dispatch = BuildDispatch::new(
         &client,
         &cache,
         interpreter,
         &index_locations,
         &flat_index,
-        &index,
-        &git,
-        &in_flight,
+        &state.index,
+        &state.git,
+        &state.in_flight,
         index_strategy,
         setup_py,
         config_settings,
@@ -335,56 +334,27 @@ pub(crate) async fn pip_install(
         &reinstall,
         &upgrade,
         Some(&tags),
-        Some(&markers),
+        ResolverMarkers::SpecificEnvironment((*markers).clone()),
         python_requirement,
         &client,
         &flat_index,
-        &index,
-        &resolve_dispatch,
+        &state.index,
+        &build_dispatch,
         concurrency,
         options,
         printer,
         preview,
+        false,
     )
     .await
     {
         Ok(resolution) => Resolution::from(resolution),
         Err(operations::Error::Resolve(uv_resolver::ResolveError::NoSolution(err))) => {
-            let report = miette::Report::msg(format!("{err}"))
-                .context("No solution found when resolving dependencies:");
+            let report = miette::Report::msg(format!("{err}")).context(err.header());
             eprint!("{report:?}");
             return Ok(ExitStatus::Failure);
         }
         Err(err) => return Err(err.into()),
-    };
-
-    // Re-initialize the in-flight map.
-    let in_flight = InFlight::default();
-
-    // If we're running with `--reinstall`, initialize a separate `BuildDispatch`, since we may
-    // end up removing some distributions from the environment.
-    let install_dispatch = if reinstall.is_none() {
-        resolve_dispatch
-    } else {
-        BuildDispatch::new(
-            &client,
-            &cache,
-            interpreter,
-            &index_locations,
-            &flat_index,
-            &index,
-            &git,
-            &in_flight,
-            index_strategy,
-            setup_py,
-            config_settings,
-            build_isolation,
-            link_mode,
-            &build_options,
-            exclude_newer,
-            concurrency,
-            preview,
-        )
     };
 
     // Sync the environment.
@@ -400,9 +370,9 @@ pub(crate) async fn pip_install(
         &hasher,
         &tags,
         &client,
-        &in_flight,
+        &state.in_flight,
         concurrency,
-        &install_dispatch,
+        &build_dispatch,
         &cache,
         &environment,
         dry_run,

@@ -15,17 +15,16 @@ use uv_configuration::PreviewMode;
 use uv_fs::Simplified;
 use uv_installer::SitePackages;
 use uv_normalize::PackageName;
-use uv_toolchain::ToolchainRequest;
-use uv_toolchain::{EnvironmentPreference, PythonEnvironment};
+use uv_python::PythonRequest;
+use uv_python::{EnvironmentPreference, PythonEnvironment};
 
 use crate::commands::ExitStatus;
 use crate::printer::Printer;
 
 /// Enumerate the installed packages in the current environment.
-#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+#[allow(clippy::fn_params_excessive_bools)]
 pub(crate) fn pip_list(
-    editable: bool,
-    exclude_editable: bool,
+    editable: Option<bool>,
     exclude: &[PackageName],
     format: &ListFormat,
     strict: bool,
@@ -37,7 +36,7 @@ pub(crate) fn pip_list(
 ) -> Result<ExitStatus> {
     // Detect the current Python interpreter.
     let environment = PythonEnvironment::find(
-        &python.map(ToolchainRequest::parse).unwrap_or_default(),
+        &python.map(PythonRequest::parse).unwrap_or_default(),
         EnvironmentPreference::from_system_flag(system, false),
         cache,
     )?;
@@ -54,9 +53,7 @@ pub(crate) fn pip_list(
     // Filter if `--editable` is specified; always sort by name.
     let results = site_packages
         .iter()
-        .filter(|dist| {
-            (!dist.is_editable() && !editable) || (dist.is_editable() && !exclude_editable)
-        })
+        .filter(|dist| editable.is_none() || editable == Some(dist.is_editable()))
         .filter(|dist| !exclude.contains(dist.name()))
         .sorted_unstable_by(|a, b| a.name().cmp(b.name()).then(a.version().cmp(b.version())))
         .collect_vec();

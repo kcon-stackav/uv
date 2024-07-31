@@ -1,31 +1,42 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 
+use uv_auth::store_credentials_from_url;
 use uv_cache::Cache;
 use uv_client::{Connectivity, FlatIndexClient, RegistryClientBuilder};
-use uv_configuration::{Concurrency, ExtrasSpecification, PreviewMode, SetupPyStrategy};
+use uv_configuration::{
+    Concurrency, ExtrasSpecification, HashCheckingMode, PreviewMode, SetupPyStrategy,
+};
 use uv_dispatch::BuildDispatch;
-use uv_distribution::{VirtualProject, DEV_DEPENDENCIES};
+use uv_distribution::DEV_DEPENDENCIES;
+use uv_fs::CWD;
 use uv_installer::SitePackages;
+use uv_normalize::PackageName;
+use uv_python::{PythonEnvironment, PythonFetch, PythonPreference, PythonRequest};
 use uv_resolver::{FlatIndex, Lock};
-use uv_toolchain::{PythonEnvironment, ToolchainFetch, ToolchainPreference, ToolchainRequest};
-use uv_types::{BuildIsolation, HashStrategy, InFlight};
+use uv_types::{BuildIsolation, HashStrategy};
 use uv_warnings::warn_user_once;
+use uv_workspace::{DiscoveryOptions, VirtualProject, Workspace};
 
 use crate::commands::pip::operations::Modifications;
+use crate::commands::project::lock::do_safe_lock;
 use crate::commands::project::{ProjectError, SharedState};
 use crate::commands::{pip, project, ExitStatus};
 use crate::printer::Printer;
-use crate::settings::{InstallerSettings, InstallerSettingsRef};
+use crate::settings::{InstallerSettingsRef, ResolverInstallerSettings};
 
 /// Sync the project environment.
+#[allow(clippy::fn_params_excessive_bools)]
 pub(crate) async fn sync(
+    locked: bool,
+    frozen: bool,
+    package: Option<PackageName>,
     extras: ExtrasSpecification,
     dev: bool,
     modifications: Modifications,
     python: Option<String>,
-    toolchain_preference: ToolchainPreference,
-    toolchain_fetch: ToolchainFetch,
-    settings: InstallerSettings,
+    python_preference: PythonPreference,
+    python_fetch: PythonFetch,
+    settings: ResolverInstallerSettings,
     preview: PreviewMode,
     connectivity: Connectivity,
     concurrency: Concurrency,
@@ -34,18 +45,27 @@ pub(crate) async fn sync(
     printer: Printer,
 ) -> Result<ExitStatus> {
     if preview.is_disabled() {
-        warn_user_once!("`uv sync` is experimental and may change without warning.");
+        warn_user_once!("`uv sync` is experimental and may change without warning");
     }
 
-    // Identify the project
-    let project = VirtualProject::discover(&std::env::current_dir()?, None).await?;
+    // Identify the project.
+    let project = if let Some(package) = package {
+        VirtualProject::Project(
+            Workspace::discover(&CWD, &DiscoveryOptions::default())
+                .await?
+                .with_current_project(package.clone())
+                .with_context(|| format!("Package `{package}` not found in workspace"))?,
+        )
+    } else {
+        VirtualProject::discover(&CWD, &DiscoveryOptions::default()).await?
+    };
 
     // Discover or create the virtual environment.
     let venv = project::get_or_init_environment(
         project.workspace(),
-        python.as_deref().map(ToolchainRequest::parse),
-        toolchain_preference,
-        toolchain_fetch,
+        python.as_deref().map(PythonRequest::parse),
+        python_preference,
+        python_fetch,
         connectivity,
         native_tls,
         cache,
@@ -53,23 +73,46 @@ pub(crate) async fn sync(
     )
     .await?;
 
-    // Read the lockfile.
-    let lock: Lock = {
-        let encoded =
-            fs_err::tokio::read_to_string(project.workspace().root().join("uv.lock")).await?;
-        toml::from_str(&encoded)?
+    // Initialize any shared state.
+    let state = SharedState::default();
+
+    let lock = match do_safe_lock(
+        locked,
+        frozen,
+        project.workspace(),
+        venv.interpreter(),
+        settings.as_ref().into(),
+        &state,
+        preview,
+        connectivity,
+        concurrency,
+        native_tls,
+        cache,
+        printer,
+    )
+    .await
+    {
+        Ok(lock) => lock,
+        Err(ProjectError::Operation(pip::operations::Error::Resolve(
+            uv_resolver::ResolveError::NoSolution(err),
+        ))) => {
+            let report = miette::Report::msg(format!("{err}")).context(err.header());
+            anstream::eprint!("{report:?}");
+            return Ok(ExitStatus::Failure);
+        }
+        Err(err) => return Err(err.into()),
     };
 
     // Perform the sync operation.
     do_sync(
         &project,
         &venv,
-        &lock,
-        extras,
+        &lock.lock,
+        &extras,
         dev,
         modifications,
-        settings.as_ref(),
-        &SharedState::default(),
+        settings.as_ref().into(),
+        &state,
         preview,
         connectivity,
         concurrency,
@@ -87,7 +130,7 @@ pub(super) async fn do_sync(
     project: &VirtualProject,
     venv: &PythonEnvironment,
     lock: &Lock,
-    extras: ExtrasSpecification,
+    extras: &ExtrasSpecification,
     dev: bool,
     modifications: Modifications,
     settings: InstallerSettingsRef<'_>,
@@ -105,6 +148,7 @@ pub(super) async fn do_sync(
         index_strategy,
         keyring_provider,
         config_setting,
+        exclude_newer,
         link_mode,
         compile_bytecode,
         reinstall,
@@ -132,7 +176,12 @@ pub(super) async fn do_sync(
     let tags = venv.interpreter().tags()?;
 
     // Read the lockfile.
-    let resolution = lock.to_resolution(project, markers, tags, &extras, &dev)?;
+    let resolution = lock.to_resolution(project, markers, tags, extras, &dev)?;
+
+    // Add all authenticated sources to the cache.
+    for url in index_locations.urls() {
+        store_credentials_from_url(url);
+    }
 
     // Initialize the registry client.
     let client = RegistryClientBuilder::new(cache.clone())
@@ -145,16 +194,14 @@ pub(super) async fn do_sync(
         .platform(venv.interpreter().platform())
         .build();
 
-    // Initialize any shared state.
-    let in_flight = InFlight::default();
-
     // TODO(charlie): These are all default values. We should consider whether we want to make them
     // optional on the downstream APIs.
     let build_isolation = BuildIsolation::default();
     let dry_run = false;
-    let exclude_newer = None;
-    let hasher = HashStrategy::default();
     let setup_py = SetupPyStrategy::default();
+
+    // Extract the hashes from the lockfile.
+    let hasher = HashStrategy::from_resolution(&resolution, HashCheckingMode::Verify)?;
 
     // Resolve the flat indexes from `--find-links`.
     let flat_index = {
@@ -172,7 +219,7 @@ pub(super) async fn do_sync(
         &flat_index,
         &state.index,
         &state.git,
-        &in_flight,
+        &state.in_flight,
         index_strategy,
         setup_py,
         config_setting,
@@ -199,7 +246,7 @@ pub(super) async fn do_sync(
         &hasher,
         tags,
         &client,
-        &in_flight,
+        &state.in_flight,
         concurrency,
         &build_dispatch,
         cache,
